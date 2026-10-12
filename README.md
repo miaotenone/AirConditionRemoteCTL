@@ -28,6 +28,7 @@ src/
 docs/
   protocol.md               串口协议编解码表
   wiring.md                 接线表
+  rpi-feishu-interface-spec.md  树莓派 + 飞书服务接口规格（另一仓库）
   superpowers/specs/...     设计文档
   superpowers/plans/...     实现计划
 tests/native/               原生单元测试
@@ -75,6 +76,8 @@ tests/native/               原生单元测试
 
 字段取值：`power` 0/1；`mode` 自动0/制冷1/除湿2/送风3/制热4；`temp` 16~30；`fan` 自动0/低1/中2/高3。指令只带需要改的字段，越界值会被夹取到合法范围。
 
+> 这是两个仓库的**唯一接口**。树莓派侧服务的完整规格（飞书卡片、按钮动作、时序、部署、验收）见 [`docs/rpi-feishu-interface-spec.md`](docs/rpi-feishu-interface-spec.md)。
+
 ## 串口协议
 
 见 [`docs/protocol.md`](docs/protocol.md)（含 `0x30` 多参数 / `0x31` 单参数 / `0x10`,`0x12` 学习帧与校验算法与品牌码表）。
@@ -86,6 +89,75 @@ tests/native/               原生单元测试
 ```powershell
 ./scripts/run_native_tests.ps1
 ```
+
+## 联调检查清单（接真机）
+
+按顺序来，每步先确认「预期现象」再进下一步。任何一步不过，先停下修，不要往下叠。
+
+### 0. 上电自检（只插 USB，不接外设）
+
+| 步骤 | 操作 | 预期现象 |
+|---|---|---|
+| 0.1 | `pio run -t upload` 后开 `pio device monitor` | 打印 `[ac-gateway] boot`，无反复重启 |
+| 0.2 | 观察串口 | 出现 `[wifi] connecting (portal: AC-Gateway-Setup)` |
+
+### 1. OLED（先接屏，其余不接）
+
+接线：`GND/VCC(3V3)/SCL→GPIO22/SDA→GPIO21`。
+
+| 现象 | 结论 / 处理 |
+|---|---|
+| 显示 `AirCon Gateway` + `AC OFF COOL` 等 4 行 | ✅ 正常 |
+| 全黑，串口有 `[oled] using 0x3C` | 多为控制器不符：把 `src/config.h` 的 `OLED_SH1106` 改 `0` 重烧 |
+| 串口 `[oled] using 0x3D` 或探测不到 | 检查 SDA/SCL 是否接反、是否 3.3V 供电 |
+| 花屏 / 上半屏错位 | 典型 SH1106 参数不符，同上切换 `OLED_SH1106` |
+
+### 2. 红外模块
+
+接线：`ESP32 GPIO16(RX) ← 模块 TX`、`GPIO17(TX) → 模块 RX`、`VCC(3.3~5V)`、`GND`。
+
+| 步骤 | 操作 | 预期现象 |
+|---|---|---|
+| 2.1 | 用手机摄像头对着红外发射管（摄像头能看到红外） | 连接正常后不会常亮，只在发码瞬间闪 |
+| 2.2 | 给一次控制指令（见第 4 步） | 串口打印 `[ir] -> 68 0C 00 FF 30 10 ...` |
+| 2.3 | 对着空调发码 | 空调响应（滴一声 / 改变状态） |
+| 2.4 | 若空调无反应 | 确认品牌码：美的1 = `0x10`，可试 `0x11`/`0x12`（`docs/protocol.md` 品牌表） |
+
+> 交叉验证：用厂家 IrStudy 软件生成同一品牌的空调编码，和本固件打印的帧逐字节比对。
+
+### 3. 配网
+
+| 步骤 | 操作 | 预期现象 |
+|---|---|---|
+| 3.1 | 手机连热点 `AC-Gateway-Setup`（密码 `acgateway`） | 自动弹出或手动开 `192.168.4.1` |
+| 3.2 | 填 WiFi + MQTT（树莓派 IP / 1883）后保存 | 串口 `[wifi] connected, IP=...` |
+| 3.3 | 断掉 WiFi 再上电 | 自动重连，**无需**重配（配置在 NVS） |
+
+### 4. MQTT 端到端
+
+树莓派上装好 Mosquitto（见另一仓库），用 `mosquitto_sub` / MQTTX 验证。
+
+| 步骤 | 操作 | 预期现象 |
+|---|---|---|
+| 4.1 | 订阅 `ac/#` | 立刻收到 retained 的 `ac/state`，`online:true` |
+| 4.2 | 看 `ac/status` | `{"online":true}` |
+| 4.3 | 发 `{"power":1}` 到 `ac/cmd` | 空调开机 + OLED 变 `AC ON` + `ac/state` 更新为 `power:1` |
+| 4.4 | 发 `{"temp":24,"mode":1}` 到 `ac/cmd` | 温度/模式同步，OLED 与 `ac/state` 一致 |
+| 4.5 | 发越界值 `{"temp":99}` | 被夹到 `30`，不报错 |
+| 4.6 | 发未知字段 `{"foo":1}` | 串口打印 `[cmd] unknown field 'foo' ignored`，状态不变 |
+| 4.7 | 发非法 JSON `{` | 串口 `[cmd] bad json, ignored`，设备不崩 |
+| 4.8 | 把 ESP32 断电 | 约一个心跳内 `ac/status` 变 `{"online":false}`（遗嘱） |
+| 4.9 | 连续快发 3 条改温度的指令 | 最终 `ac/state` 等于**最后一条**的值 |
+
+### 5. 常见故障速查
+
+| 现象 | 可能原因 |
+|---|---|
+| 串口刷重启 | 供电不足（红外模块加屏电流较大，用独立 5V/3V3）或接线短路 |
+| `[mqtt] connect failed rc=-2` | 服务器地址/端口错，或防火墙挡 1883 |
+| `rc=4` / `rc=5` | 用户名密码错（`rc=5` 未授权） |
+| 状态与空调不一致 | 红外没打到（对准）、品牌码不对、或空调被遥控器改过（本固件不知道 → 发一次完整状态即可对齐） |
+| 空调收到但方向/模式相反 | 该品牌码表变体问题，换美的 `0x11`/`0x12` 试 |
 
 ## 说明与限制
 
