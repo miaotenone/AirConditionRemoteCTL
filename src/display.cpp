@@ -47,12 +47,15 @@ void display_show_ac(const AcState& s, const char* net_state, const char* ip) {
     const char* mode = (s.mode <= AC_MODE_HEAT) ? modes[s.mode] : "?";
     const char* fan  = (s.fan  <= AC_FAN_HIGH) ? fans[s.fan]  : "?";
 
-    char l1[24], l2[24], l3[24];
-    snprintf(l1, sizeof(l1), "AC %s  %s", s.power ? "ON" : "OFF", mode);
-    snprintf(l2, sizeof(l2), "Temp %u C  Fan %s", (unsigned)s.temp, fan);
-    snprintf(l3, sizeof(l3), "Net %s", net_state);
-    display_lines("AirCon Gateway", l1, l2, l3);
-    (void)ip;
+    char l2[24], l3[24];
+    snprintf(l2, sizeof(l2), "AC %s  %s  %uC",
+             s.power ? "ON" : "OFF", mode, (unsigned)s.temp);
+    snprintf(l3, sizeof(l3), "Fan %s   Net %s", fan, net_state);
+
+    // Show the real IP so the user can find the device without a serial log.
+    const char* ipstr = (ip && ip[0] && strcmp(ip, "0.0.0.0") != 0) ? ip : "no IP";
+
+    display_lines("AirCon Gateway", l2, l3, ipstr);
 }
 
 uint8_t display_address() {
