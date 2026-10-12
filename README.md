@@ -94,6 +94,30 @@ tests/native/               原生单元测试
 
 按顺序来，每步先确认「预期现象」再进下一步。任何一步不过，先停下修，不要往下叠。
 
+> ✅ **已验证（2026-10-12，真机）**
+> - ESP32 启动正常（`ESP32-D0WD-V3 rev3 @240MHz`，4MB flash）
+> - **OLED**：I2C 扫描到 `0x3C`，显示正常（SH1106 驱动）
+> - **红外模块**：UART 双向 OK，每条指令都回 ACK `68 08 00 00 01 9C 9D 16`（见 `docs/protocol.md`）
+> - **美的1**：开机 / 温度 / 风速，**空调均正确响应**
+>
+> 尚缺：WiFi / MQTT 端到端（等树莓派 broker 就绪）。
+
+### 硬件自检固件（不依赖 WiFi，推荐先跑）
+
+```powershell
+python -m platformio run -e selftest -t upload --upload-port COM16   # 烧自检固件
+python -m platformio device monitor -p COM16                          # 打开串口菜单
+```
+
+串口菜单：`h` 帮助、`i` I2C 扫描、`o` OLED 测试图案、`r` 发参考帧、`p` 开关、
+`t 24` 温度、`m 1` 模式、`f 0` 风速、`b 10` 品牌、`l/s` 学习/回放、`d` 状态。
+
+也可以脚本一键抓取（自动复位 + 跑命令 + 打印结果）：`python scripts/hw_selftest.py COM16`
+
+> 自检固件是**独立环境** `[env:selftest]`，不影响主固件；恢复主固件用
+> `python -m platformio run -e esp32dev -t upload`（板子上跑的是哪个环境由最后一次烧录决定）。
+> 若 COM 口被占用（`PermissionError(13, '拒绝访问')`），先关掉 Arduino IDE 的串口监视器 / PlatformIO Serial Monitor。
+
 ### 0. 上电自检（只插 USB，不接外设）
 
 | 步骤 | 操作 | 预期现象 |
