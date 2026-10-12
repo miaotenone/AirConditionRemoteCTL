@@ -5,10 +5,16 @@
 static Preferences s_prefs;
 
 bool config_store_load(AppConfig& cfg) {
-    s_prefs.begin("acctl", true);
-    String json = s_prefs.getString("cfg", "");
+    // Open read-write: on first boot the namespace does not exist yet, and a
+    // read-only open would log a scary "nvs_open failed: NOT_FOUND".
+    s_prefs.begin("acctl", false);
+    bool has = s_prefs.isKey("cfg");
+    String json = has ? s_prefs.getString("cfg", "") : String();
     s_prefs.end();
-    if (json.isEmpty()) return false;
+    if (!has || json.isEmpty()) {
+        Serial.println("[cfg] no stored config yet (first boot)");
+        return false;
+    }
 
     DynamicJsonDocument doc(1024);
     if (deserializeJson(doc, json)) return false;
