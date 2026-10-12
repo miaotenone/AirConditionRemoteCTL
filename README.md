@@ -24,13 +24,19 @@ src/
   display.{h,cpp}           U8g2 OLED 显示
   config_store.{h,cpp}      NVS 配置读写
   web_config.{h,cpp}        WiFiManager 配网 + 配置页
+  selftest.cpp              硬件自检固件（`[env:selftest]`，不依赖 WiFi）
   config.h / pins.h         默认参数与引脚
 docs/
-  protocol.md               串口协议编解码表
+  protocol.md               串口协议编解码表（含模块应答帧）
   wiring.md                 接线表
   rpi-feishu-interface-spec.md  树莓派 + 飞书服务接口规格（另一仓库）
   superpowers/specs/...     设计文档
   superpowers/plans/...     实现计划
+scripts/
+  run_native_tests.ps1      原生单元测试
+  hw_selftest.py            真机串口自检抓取（自检固件）
+  serial_cap.py             复位 + 抓取串口日志（主固件）
+  wifi_reset.py             触发开机 `r` 恢复出厂
 tests/native/               原生单元测试
 ```
 
@@ -59,12 +65,13 @@ tests/native/               原生单元测试
 
 ## 首次配网与配置
 
-1. 上电后若从未配网（或连不上），ESP32 会开一个热点 **`AC-Gateway-Setup`**（密码 `acgateway`）。
-2. 手机连上该热点，浏览器打开配置页，填写：
-   - WiFi 名称/密码
+1. 上电后若从未配网（或连不上），ESP32 会开一个热点 **`AC-Gateway-Setup`**（密码 `acgateway`），OLED 会显示这个热点名和密码。
+2. 手机连上该热点，浏览器打开配置页（`192.168.4.1`），填写：
+   - WiFi 名称/密码（**只能 2.4GHz**）
    - **MQTT 服务器**（树莓派 IP）、端口、账号、密码
    - Topic 前缀（默认 `ac`）、设备名、空调品牌（十六进制，美的1 = `0x10`）
 3. 保存后自动重启并连接。**以后换网络/换服务器只需重新进入配置页，无需重新编译烧录。**
+4. 配错了想重来？**上电 2 秒内从串口发 `r`** 恢复出厂（清 WiFi + 配置），见「联调检查清单」3.4。
 
 ## MQTT 契约（与树莓派仓库的接口）
 
@@ -96,11 +103,13 @@ tests/native/               原生单元测试
 
 > ✅ **已验证（2026-10-12，真机）**
 > - ESP32 启动正常（`ESP32-D0WD-V3 rev3 @240MHz`，4MB flash）
-> - **OLED**：I2C 扫描到 `0x3C`，显示正常（SH1106 驱动）
+> - **OLED**：I2C 扫描到 `0x3C`，显示正常（SH1106 驱动），屏幕上直接显示本机 IP
 > - **红外模块**：UART 双向 OK，每条指令都回 ACK `68 08 00 00 01 9C 9D 16`（见 `docs/protocol.md`）
 > - **美的1**：开机 / 温度 / 风速，**空调均正确响应**
+> - **配网**：手机连 `AC-Gateway-Setup` → 配置页保存 → `[wifi] connected, IP=192.168.8.105`；断电 / 重新烧录后**自动重连，无需重配**（NVS 持久化）
+> - **OTA**：`ac-gateway.local:3232`（mDNS 可用，后续可直接 OTA 升级）
 >
-> 尚缺：WiFi / MQTT 端到端（等树莓派 broker 就绪）。
+> 尚缺：**MQTT 端到端**（等树莓派 broker 就绪）。
 
 ### 硬件自检固件（不依赖 WiFi，推荐先跑）
 
@@ -131,7 +140,9 @@ python -m platformio device monitor -p COM16                          # 打开�
 
 | 现象 | 结论 / 处理 |
 |---|---|
-| 显示 `AirCon Gateway` + `AC OFF COOL` 等 4 行 | ✅ 正常 |
+| 4 行：`AirCon Gateway` / `AC ON  COOL  24C` / `Fan AUTO   Net OK` / `192.168.x.x` | ✅ 正常 |
+| 首启（未配网）时显示 `connecting WiFi...` + `AP: AC-Gateway-Setup` / `pw: acgateway` | ✅ 正常（配网门户提示） |
+| 第四行 `no IP` | 还没连上 WiFi |
 | 全黑，串口有 `[oled] using 0x3C` | 多为控制器不符：把 `src/config.h` 的 `OLED_SH1106` 改 `0` 重烧 |
 | 串口 `[oled] using 0x3D` 或探测不到 | 检查 SDA/SCL 是否接反、是否 3.3V 供电 |
 | 花屏 / 上半屏错位 | 典型 SH1106 参数不符，同上切换 `OLED_SH1106` |
@@ -153,9 +164,22 @@ python -m platformio device monitor -p COM16                          # 打开�
 
 | 步骤 | 操作 | 预期现象 |
 |---|---|---|
-| 3.1 | 手机连热点 `AC-Gateway-Setup`（密码 `acgateway`） | 自动弹出或手动开 `192.168.4.1` |
-| 3.2 | 填 WiFi + MQTT（树莓派 IP / 1883）后保存 | 串口 `[wifi] connected, IP=...` |
-| 3.3 | 断掉 WiFi 再上电 | 自动重连，**无需**重配（配置在 NVS） |
+| 3.1 | 手机连热点 `AC-Gateway-Setup`（密码 `acgateway`） | OLED 显示 `connecting WiFi...` + 热点名/密码；浏览器自动弹配置页，否则手动开 `192.168.4.1` |
+| 3.2 | 选你家 **2.4GHz** WiFi、填密码（+ MQTT 树莓派 IP / 1883）后保存 | 热点消失，串口 `[wifi] connected, IP=192.168.x.x` |
+| 3.3 | 断电再上电（或重新烧录） | 自动重连同一 IP，**不再开热点**（配置在 NVS）|
+
+> ⚠️ ESP32 **只支持 2.4GHz**。若保存后连不上、串口反复重连，多半是连到了 5GHz 段或密码错。
+
+### 3.4 配网逃生通道（`r` 恢复出厂）
+
+配错网 / 换路由器连不上 / 串口出现 `4WAY_HANDSHAKE_TIMEOUT` 时，**上电后 2 秒内**从串口发一个字符 `r`：
+
+```
+[ac-gateway] send 'r' within 2s to reset WiFi+config ... RESET
+[ac-gateway] WiFi + config cleared, rebooting
+```
+
+会清掉 WiFi 凭据 + 应用配置并重启，下次开机重新进入配网门户，**不用重新烧录**。
 
 ### 4. MQTT 端到端
 
@@ -178,6 +202,10 @@ python -m platformio device monitor -p COM16                          # 打开�
 | 现象 | 可能原因 |
 |---|---|
 | 串口刷重启 | 供电不足（红外模块加屏电流较大，用独立 5V/3V3）或接线短路 |
+| 烧录报 `could not open COM16 ... 拒绝访问` | 串口被占用：关掉 Arduino IDE 的串口监视器 / PlatformIO Serial Monitor / PuTTY，或杀掉 `serial-monitor` 进程 |
+| 首启屏幕全黑（但串口正常） | 早期固件把 OLED 初始化排在阻塞的配网之后；现已改为**先初始化屏幕**（≥ `56b4d20`）|
+| 串口反复 `4WAY_HANDSHAKE_TIMEOUT`、热点迟迟不出现 | 板内残留连不上的 WiFi 凭据；**上电 2 秒内发 `r`** 恢复出厂（见 3.4）|
+| OLED 显示 `Net MQTT?` | WiFi 通了但没有 broker（正常，等树莓派就绪）|
 | `[mqtt] connect failed rc=-2` | 服务器地址/端口错，或防火墙挡 1883 |
 | `rc=4` / `rc=5` | 用户名密码错（`rc=5` 未授权） |
 | 状态与空调不一致 | 红外没打到（对准）、品牌码不对、或空调被遥控器改过（本固件不知道 → 发一次完整状态即可对齐） |
@@ -189,3 +217,6 @@ python -m platformio device monitor -p COM16                          # 打开�
 - `0x31` 单参数与 `0x10/0x12` 学习帧编码器已提供（`ac_encoder`），主路径暂未使用，便于后续扩展。
 - OLED 默认按 **SH1106** 驱动 1.3" 屏；0.96" SSD1306 请改 `src/config.h` 的 `OLED_SH1106` 为 `0`。
 - 默认引脚：OLED SDA=21/SCL=22，红外模块 RX=16/TX=17（见 `src/pins.h`）。
+- **网络**：只需 **2.4GHz** WiFi。IP 由路由器 DHCP 分配（实测 `192.168.8.105`），设备名 `ac-gateway`；建议在路由器上做 **IP 绑定**，或直接用 mDNS 名 `ac-gateway.local`。
+- **OTA**：`ArduinoOTA` 已启用（`OTA_ENABLED=1`），端口 `3232`，可直接无线升级，不必每次插 USB。
+- **恢复出厂**：上电 2 秒内串口发 `r` → 清 WiFi + 配置并重启（见「联调检查清单」3.4）。
