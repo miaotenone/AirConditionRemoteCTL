@@ -1,0 +1,17 @@
+ref/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Native test artifacts
+build/
+
+# Editor
+.vscode/
+*.code-workspace
+
+# OS
+Thumbs.db
+Desktop.ini
