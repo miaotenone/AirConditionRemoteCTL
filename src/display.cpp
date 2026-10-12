@@ -54,3 +54,39 @@ void display_show_ac(const AcState& s, const char* net_state, const char* ip) {
     display_lines("AirCon Gateway", l1, l2, l3);
     (void)ip;
 }
+
+uint8_t display_address() {
+    return s_addr;
+}
+
+void display_test_patterns() {
+    // 1) all pixels on
+    u8g2.clearBuffer();
+    u8g2.drawBox(0, 0, 128, 64);
+    u8g2.sendBuffer();
+    delay(700);
+
+    // 2) all off
+    u8g2.clearBuffer();
+    u8g2.sendBuffer();
+    delay(400);
+
+    // 3) border + diagonals + label
+    u8g2.clearBuffer();
+    u8g2.drawFrame(0, 0, 128, 64);
+    u8g2.drawLine(0, 0, 127, 63);
+    u8g2.drawLine(127, 0, 0, 63);
+    u8g2.drawStr(2, 12, "OLED OK");
+    u8g2.sendBuffer();
+    delay(700);
+
+    // 4) text sample (checks font rendering / no garbling)
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(0, 12, "SELFTEST");
+    u8g2.drawStr(0, 26, "1234567890");
+    u8g2.drawStr(0, 40, "PWR COOL 24C");
+    u8g2.drawStr(0, 54, "ABCDEFGHIJ");
+    u8g2.sendBuffer();
+    delay(500);
+}
