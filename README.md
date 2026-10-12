@@ -72,6 +72,7 @@ tests/native/               原生单元测试
    - Topic 前缀（默认 `ac`）、设备名、空调品牌（十六进制，美的1 = `0x10`）
 3. 保存后自动重启并连接。**以后换网络/换服务器只需重新进入配置页，无需重新编译烧录。**
 4. 配错了想重来？**上电 2 秒内从串口发 `r`** 恢复出厂（清 WiFi + 配置），见「联调检查清单」3.4。
+5. 不想用手机配网？可以直接**从串口写配置**，见「联调检查清单」3.5（联调阶段推荐，脚本一条命令搞定）。
 
 ## MQTT 契约（与树莓派仓库的接口）
 
@@ -180,6 +181,38 @@ python -m platformio device monitor -p COM16                          # 打开�
 ```
 
 会清掉 WiFi 凭据 + 应用配置并重启，下次开机重新进入配网门户，**不用重新烧录**。
+
+### 3.5 串口配网（免手机，联调推荐）
+
+不想开手机热点配网时，可以直接从串口写配置：
+
+```powershell
+# 从 Windows 已保存的 WiFi 档案取 SSID+密码（不会打印明文），再写 MQTT 地址
+python scripts/provision.py COM16 --windows-profile HUAWEI-B311-98C3 --host 192.168.8.103
+
+# 也可以直接给参数
+python scripts/provision.py COM16 --ssid MyWiFi --pass 12345678 --host 192.168.8.103 --mqtt-port 1883
+```
+
+也可以手动敲（脚本会先复位板子；`--no-reset` 可跳过）：
+
+```powershell
+python scripts/serial_cmd.py COM16 "show" "scan"
+```
+
+| 命令 | 作用 |
+|---|---|
+| `scan` | 列出可见 WiFi（含信号强度，用来确认 2.4GHz 名称）|
+| `show` | 打印当前配置（密码打码）|
+| `set ssid\|pass\|host\|port\|user\|mqttpass\|prefix\|name\|brand <值>` | 改一个字段并立即存 NVS |
+| `restart` | 重启（改完 `ssid`/`pass` 后**必须**发一次才会去连）|
+| `reset` | 清 WiFi + 配置并重启（等同 3.4 的 `r`）|
+
+> ⚠️ 配置台只在**上电后 20 秒内**开放。之后固件进入**阻塞的**配置门户，那时串口控制台不再运行 ——
+> 所以 `provision.py` / `serial_cmd.py` 默认先复位板子抢这个窗口。
+>
+> 配置存在**我们自己的 NVS**里，开机优先用它直连；只有连不上才回落到配置门户。因此串口配好的板子
+> 以后每次上电都直连，不再开热点。
 
 ### 4. MQTT 端到端
 

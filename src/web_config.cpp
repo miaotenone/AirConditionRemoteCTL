@@ -2,8 +2,50 @@
 #include <Arduino.h>
 #include <WiFiManager.h>
 #include "config.h"
+#include "serial_console.h"
 
 void web_config_run(AppConfig& cfg) {
+    // ---------------------------------------------------------------------
+    // 1) Prefer credentials we already hold in our OWN config. This is how a
+    //    bench-provisioned board (serial `set ssid` / `set pass`) comes up:
+    //    no phone, no captive portal. WiFiManager only knows the credentials
+    //    it saved itself, so without this branch a provisioned board would
+    //    still block on the portal even though our config is complete.
+    // ---------------------------------------------------------------------
+    bool haveCreds = cfg.wifi_ssid.length() && cfg.wifi_pass.length();
+    if (haveCreds) {
+        Serial.printf("[wifi] trying stored ssid '%s'", cfg.wifi_ssid.c_str());
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(cfg.wifi_ssid.c_str(), cfg.wifi_pass.c_str());
+    } else {
+        Serial.println("[wifi] no stored WiFi credentials.");
+        Serial.println("[wifi] serial provisioning window open -- try:");
+        Serial.println("[wifi]   scan | set ssid <name> | set pass <pw> | set host <ip> | restart");
+    }
+
+    // Keep polling the serial console while we wait. This window is the only
+    // chance to provision a board that has no credentials: the captive portal
+    // below blocks setup(), so the console (in loop()) would never run again.
+    unsigned long t0 = millis();
+    unsigned long lastDot = 0;
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_STA_TIMEOUT_MS) {
+        delay(50);
+        serial_console_poll(cfg);
+        if (haveCreds && millis() - lastDot >= 1000) { lastDot = millis(); Serial.print('.'); }
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("[wifi] connected, IP=%s\n", WiFi.localIP().toString().c_str());
+        WiFi.setHostname(cfg.device_name.c_str());
+        return;
+    }
+    Serial.printf("[wifi] %s -> config portal\n",
+                  haveCreds ? "stored credentials did not connect" : "nothing provisioned");
+
+    // ---------------------------------------------------------------------
+    // 2) Otherwise fall back to the WiFiManager captive portal (unchanged).
+    // ---------------------------------------------------------------------
     WiFiManager wm;
     wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
     wm.setDebugOutput(false);
@@ -56,6 +98,12 @@ void web_config_run(AppConfig& cfg) {
 
     if (cfg.topic_prefix.isEmpty()) cfg.topic_prefix = DEFAULT_TOPIC_PREFIX;
     if (cfg.device_name.isEmpty())  cfg.device_name  = DEFAULT_DEVICE_NAME;
+
+    // Record the SSID the portal joined (display only -- WiFiManager keeps the
+    // password, and we deliberately leave wifi_pass empty so the next boot goes
+    // straight back through the portal path instead of waiting on a dead STA
+    // connect attempt).
+    if (cfg.wifi_ssid.isEmpty()) cfg.wifi_ssid = WiFi.SSID();
 
     WiFi.setHostname(cfg.device_name.c_str());
     config_store_save(cfg);

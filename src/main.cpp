@@ -10,6 +10,7 @@
 #include "display.h"
 #include "config_store.h"
 #include "web_config.h"
+#include "serial_console.h"
 #include "net_mqtt.h"
 
 #if OTA_ENABLED
@@ -137,6 +138,7 @@ void loop() {
     ArduinoOTA.handle();
 #endif
 
+    serial_console_poll(g_cfg);
     net_loop();
 
     if (g_cmd_pending) {
