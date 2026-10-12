@@ -34,6 +34,9 @@ void web_config_run(AppConfig& cfg) {
     wm.addParameter(&p_brand);
 
     Serial.printf("[wifi] connecting (portal: %s)\n", WIFI_PORTAL_AP_NAME);
+    Serial.printf("[wifi] if no saved network works, join AP '%s' (pw '%s') "
+                  "and open http://192.168.4.1\n",
+                  WIFI_PORTAL_AP_NAME, WIFI_PORTAL_AP_PASS);
     if (!wm.autoConnect(WIFI_PORTAL_AP_NAME, WIFI_PORTAL_AP_PASS)) {
         Serial.println("[wifi] portal timed out, restarting");
         delay(1000);
@@ -56,4 +59,11 @@ void web_config_run(AppConfig& cfg) {
 
     WiFi.setHostname(cfg.device_name.c_str());
     config_store_save(cfg);
+}
+
+void web_config_reset() {
+    WiFiManager wm;
+    wm.setDebugOutput(false);
+    wm.resetSettings();      // forget the saved AP / password
+    config_store_clear();    // forget MQTT + app settings
 }

@@ -22,3 +22,6 @@ bool config_store_load(AppConfig& cfg);
 
 // Persist the current configuration.
 void config_store_save(const AppConfig& cfg);
+
+// Erase the stored configuration (factory reset of the app settings).
+void config_store_clear();

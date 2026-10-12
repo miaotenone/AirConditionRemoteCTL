@@ -58,3 +58,9 @@ void config_store_save(const AppConfig& cfg) {
     s_prefs.putString("cfg", json);
     s_prefs.end();
 }
+
+void config_store_clear() {
+    s_prefs.begin("acctl", false);
+    if (s_prefs.isKey("cfg")) s_prefs.remove("cfg");
+    s_prefs.end();
+}

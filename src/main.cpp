@@ -79,13 +79,43 @@ void setup() {
     delay(200);
     Serial.println("\n[ac-gateway] boot");
 
-    config_store_load(g_cfg);
-    web_config_run(g_cfg);
+    // The OLED is our only user-facing feedback, so bring it up FIRST --
+    // web_config_run() below can block for a long time on the config portal.
+    display_begin();
+    display_lines("AirCon Gateway", "starting...", "", "");
 
+    config_store_load(g_cfg);
     g_state = g_cfg.initial;
     ac_state_clamp(g_state);
 
-    display_begin();
+    // Escape hatch: send 'r' within 2s of boot to wipe the stored WiFi
+    // credentials + app settings. Use when the saved network is gone (or the
+    // password changed) and the config portal would otherwise never open.
+    Serial.print("[ac-gateway] send 'r' within 2s to reset WiFi+config ... ");
+    bool want_reset = false;
+    unsigned long t0 = millis();
+    while (millis() - t0 < 2000) {
+        int c = Serial.read();
+        if (c == 'r' || c == 'R') { want_reset = true; break; }
+        delay(5);
+    }
+    Serial.println(want_reset ? "RESET" : "ok");
+    if (want_reset) {
+        web_config_reset();
+        display_lines("AirCon Gateway", "config cleared", "rebooting...", "");
+        Serial.println("[ac-gateway] WiFi + config cleared, rebooting");
+        delay(800);
+        ESP.restart();
+    }
+
+    // Shown while (and if) the blocking config portal is open.
+    display_lines("AirCon Gateway", "connecting WiFi...",
+                  "AP: AC-Gateway-Setup", "pw: acgateway");
+    web_config_run(g_cfg);
+
+    display_lines("AirCon Gateway", "WiFi OK",
+                  WiFi.localIP().toString().c_str(), "starting MQTT");
+
     ir_module_begin();
 
     net_set_command_handler(on_command);
