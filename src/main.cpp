@@ -6,6 +6,7 @@
 #include "pins.h"
 #include "ac_encoder.h"
 #include "ac_state.h"
+#include "dht_sensor.h"
 #include "ir_module.h"
 #include "display.h"
 #include "config_store.h"
@@ -25,6 +26,25 @@ static char    g_cmd_buf[256];
 static size_t  g_cmd_len = 0;
 static char    g_last_action[24] = "boot";
 
+// Last DHT11 reading (design 6.1). Published to <prefix>/env and shown on the
+// room page; the closed-loop decision itself lives on the Raspberry Pi.
+static bool g_env_ok  = false;
+static int  g_room_c  = 0;
+static int  g_humidity = 0;
+
+// Fail-safe bookkeeping (design 8). The AC gets turned off when the device
+// loses contact with whoever is making the decisions, so we have to remember
+// whether we ever had contact, whether we already tripped, and what the state
+// was before we forced it off.
+static bool     g_failsafe_armed   = false;
+static bool     g_failsafe_tripped = false;
+static bool     g_failsafe_report  = false;  // the event still needs sending
+static uint32_t g_last_contact     = 0;
+static AcState  g_prev_state;
+
+// Kept alive so DisplayInfo.ip stays valid (a temporary String would not).
+static String   g_ip_str;
+
 static const char* net_state_name() {
     if (net_connected()) return "OK";
     if (WiFi.status() == WL_CONNECTED) return "MQTT?";
@@ -32,7 +52,18 @@ static const char* net_state_name() {
 }
 
 static void refresh_display() {
-    display_show_ac(g_state, net_state_name(), WiFi.localIP().toString().c_str());
+    DisplayInfo info;
+    info.ac            = g_state;
+    info.net_state     = net_state_name();
+    g_ip_str           = WiFi.localIP().toString();
+    info.ip            = g_ip_str.c_str();
+    info.env_ok        = g_env_ok;
+    info.room_c        = g_room_c;
+    info.humidity      = g_humidity;
+    info.service_alive = net_service_alive();
+    info.failsafe      = g_failsafe_tripped;
+    info.uptime_s      = millis() / 1000;
+    display_show_info(info);
 }
 
 // Copy the incoming command out of the MQTT callback (which is not
@@ -72,6 +103,91 @@ static void apply_pending_command() {
     net_publish_state(g_cfg, g_state, true);
 
     snprintf(g_last_action, sizeof(g_last_action), "cmd @%lus", (unsigned long)(millis() / 1000));
+    refresh_display();
+}
+
+// --- DHT11 (design 6.1) ----------------------------------------------------
+//
+// We publish `ok=false` on a failed read rather than staying quiet: the service
+// must be able to tell "no data" from "sensor broken", and it drops ok=false
+// either way.
+static void dht_loop() {
+    static uint32_t last = 0;
+    if (last == 0) {
+        // DHT11 wants >= 1s of settling after power-up; the first read lands a
+        // few seconds into the run rather than in the middle of boot.
+        last = millis() - DHT_READ_MS + 5000UL;
+    }
+    if ((uint32_t)(millis() - last) < DHT_READ_MS) return;
+    last = millis();
+
+    int t = g_room_c, h = g_humidity;
+    bool ok = dht_read(t, h);
+    g_env_ok   = ok;
+    g_room_c   = t;
+    g_humidity = h;
+
+    net_publish_env(g_cfg, t, h, ok);
+    if (ok) Serial.printf("[dht] room=%dC humidity=%d%%\n", t, h);
+    else    Serial.println("[dht] read failed");
+}
+
+// --- fail-safe (design 8) --------------------------------------------------
+//
+// "Contact" means BOTH halves are healthy:
+//   * the WiFi link and the MQTT session to the broker, and
+//   * a recent <prefix>/hb from the service that makes the decisions.
+//
+// Mosquitto is its own systemd unit on the Pi, so a live broker with a dead bot
+// process still looks connected -- the heartbeat is what catches that case.
+// After five minutes of no contact we send one IR "off" and say so as soon as
+// we can reach the service again.
+static void failsafe_loop() {
+    uint32_t now = millis();
+    bool healthy = net_connected() && net_service_alive();
+
+    if (healthy) {
+        g_last_contact = now;
+
+        // Boot guard: never trip before we have proven we can reach the
+        // service at least once. Otherwise a device that boots without WiFi
+        // would "fail safe" against an AC it never controlled.
+        if (!g_failsafe_armed) {
+            g_failsafe_armed = true;
+            Serial.println("[failsafe] armed (first contact)");
+        }
+
+        if (g_failsafe_tripped) {
+            g_failsafe_tripped = false;
+            net_publish_state(g_cfg, g_state, true);
+            Serial.println("[failsafe] contact restored");
+            refresh_display();
+        }
+
+        if (g_failsafe_report && net_publish_event(g_cfg, "failsafe_off", g_prev_state)) {
+            g_failsafe_report = false;
+            Serial.println("[failsafe] reported to the service");
+        }
+        return;
+    }
+
+    if (!g_failsafe_armed || g_failsafe_tripped) return;
+    if ((uint32_t)(now - g_last_contact) < LINK_LOST_OFF_MS) return;
+
+    Serial.println("[failsafe] no contact for 5 min -> AC off");
+    g_prev_state = g_state;
+    g_state.power = AC_POWER_OFF;
+
+    uint8_t frame[MULTI_PARAM_FRAME_SIZE];
+    size_t n = build_multi_param_frame(frame, g_cfg.brand, g_state.power,
+                                       g_state.mode, g_state.temp, g_state.fan);
+    ir_module_send(frame, n);
+    net_publish_state(g_cfg, g_state, false);   // a no-op while offline
+
+    g_failsafe_tripped = true;
+    g_failsafe_report  = true;
+    snprintf(g_last_action, sizeof(g_last_action), "failsafe @%lus",
+             (unsigned long)(millis() / 1000));
     refresh_display();
 }
 
@@ -118,6 +234,7 @@ void setup() {
                   WiFi.localIP().toString().c_str(), "starting MQTT");
 
     ir_module_begin();
+    dht_begin();
 
     net_set_command_handler(on_command);
     net_begin(g_cfg);
@@ -146,17 +263,24 @@ void loop() {
         apply_pending_command();
     }
 
+    // Safety first, then the sensor, then housekeeping.
+    failsafe_loop();
+    dht_loop();
+
     static uint32_t lastHeartbeat = 0;
     if (millis() - lastHeartbeat > STATE_HEARTBEAT_MS) {
         lastHeartbeat = millis();
         net_publish_state(g_cfg, g_state, net_connected());
     }
 
+    // Hand the pager fresh data once a second; display_tick() does the actual
+    // animating at its own frame cadence.
     static uint32_t lastDisplay = 0;
     if (millis() - lastDisplay > 1000) {
         lastDisplay = millis();
         refresh_display();
     }
+    display_tick();
 
     delay(2);
 }

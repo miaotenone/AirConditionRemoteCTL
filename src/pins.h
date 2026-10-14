@@ -9,3 +9,8 @@
 // ESP32 TX  -> module RX
 #define PIN_IR_RX 16
 #define PIN_IR_TX 17
+
+// ---- DHT11 room sensor (single-wire; needs a 4.7k~10k pull-up to 3V3) ----
+// GPIO4 is a plain input/output pin with no strapping or boot role, so it is
+// safe to hold a sensor on it. See docs/wiring.md for the wiring table.
+#define PIN_DHT 4
