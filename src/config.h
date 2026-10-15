@@ -14,6 +14,11 @@
 #define WIFI_PORTAL_AP_NAME "AC-Gateway-Setup"
 #define WIFI_PORTAL_AP_PASS "acgateway"   // must be >= 8 chars
 #define WIFI_PORTAL_TIMEOUT_S 180
+// Absolute cap on one portal visit, measured from when it opened. The idle
+// timeout above restarts while a phone is associated with the setup AP, so on
+// its own it would let a phone someone walked away from pin the gateway in
+// configuration forever -- no MQTT, no AC control.
+#define PORTAL_HARD_TIMEOUT_S 900
 #define WIFI_STA_TIMEOUT_MS 20000UL  // try our own stored SSID before the portal
 
 // ---- defaults (overridable via config portal / NVS) ----

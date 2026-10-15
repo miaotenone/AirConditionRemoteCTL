@@ -29,3 +29,27 @@ WifiCred wifi_cred_after_portal(const char* portal_ssid, const char* portal_pass
 // the whole final second instead of "0" while the portal is still usable.
 unsigned portal_seconds_left(unsigned long now_ms, unsigned long start_ms,
                              unsigned long timeout_s);
+
+// Absolute deadline for the config portal, measured from the first time it
+// opened. The slider above restarts whenever a client is associated, so on its
+// own it lets a phone someone walked away from pin the device in the portal
+// forever -- no MQTT, no AC control. This ceiling never restarts.
+bool portal_hard_timeout(unsigned long now_ms, unsigned long opened_ms,
+                         unsigned long cap_s);
+
+// Port number typed into the portal. "" / unparsable / 0 / out of range all
+// keep the previous value rather than persisting a broken-looking setting.
+unsigned short portal_port_or(const char* text, unsigned short fallback);
+
+// AC brand typed into the portal, as hex, 1..255. Anything else keeps the
+// previous value (0 used to mean the same, and a wider value was silently
+// truncated to a byte).
+unsigned char portal_brand_or(const char* text, unsigned char fallback);
+
+// Copy a WiFi credentials field out of the IDF's fixed-size array. `src_len` is
+// the width of that array (32 for an SSID, 64 for a passphrase) because at full
+// length it holds NO NUL terminator -- the core's own WiFi.SSID()/psk()
+// accessors strlen() it and read past the end. This never reads src past
+// src_len, stops at a NUL if one is there, and always terminates dst, so dst
+// must be at least src_len + 1 bytes.
+void wifi_field_copy(char* dst, size_t dst_size, const char* src, size_t src_len);

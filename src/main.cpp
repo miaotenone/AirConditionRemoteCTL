@@ -226,12 +226,13 @@ void setup() {
     }
     ac_state_clamp(g_state);
 
-    // Escape hatch: send 'r' within 2s of boot -- or hold the BOOT button --
+    // Escape hatch: send 'r' within 2s of boot -- or hold the BOOT button for
+    // 3 s (which completes during the WiFi connect below, see web_config.cpp) --
     // to wipe the stored WiFi credentials + app settings. Use when the saved
     // network is gone (or the password changed) and the config portal would
     // otherwise never open.
     pinMode(PIN_BOOT, INPUT_PULLUP);
-    Serial.print("[ac-gateway] send 'r' (or hold BOOT) within 2s to reset WiFi+config ... ");
+    Serial.print("[ac-gateway] send 'r' within 2s (or hold BOOT 3s) to reset WiFi+config ... ");
     bool want_reset = false;
     unsigned long t0 = millis();
     while (millis() - t0 < 2000) {

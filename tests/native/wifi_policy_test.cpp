@@ -102,6 +102,69 @@ int main() {
                portal_seconds_left(now, start, 180) == 160);
     }
 
+    // --- an attached client must not hold the portal open forever ---
+    // The sliding clock above restarts whenever a station is associated, so a
+    // phone someone walked away from would pin the device in the portal. This
+    // absolute ceiling is measured from the first time the portal opened.
+    expect("hard ceiling: still open early",
+           portal_hard_timeout(100000, 0, 600) == false);
+    expect("hard ceiling: fires at the cap",
+           portal_hard_timeout(600000, 0, 600) == true);
+    expect("hard ceiling: fires past the cap",
+           portal_hard_timeout(900000, 0, 600) == true);
+    expect("hard ceiling: survives the millis() wrap",
+           portal_hard_timeout(0xFFFFFF00UL + 700000UL, 0xFFFFFF00UL, 600) == true);
+
+    // --- values typed into the portal must not corrupt the config ---
+    // atoi()/strtol() accept "" as 0 and let 99999 wrap a uint16_t, so a typo
+    // on the phone would be persisted as a working-looking but wrong setting.
+    expect("port: plain value", portal_port_or("1883", 1883) == 1883);
+    expect("port: blank keeps the old one", portal_port_or("", 1883) == 1883);
+    expect("port: garbage keeps the old one", portal_port_or("abc", 1883) == 1883);
+    expect("port: zero keeps the old one", portal_port_or("0", 1883) == 1883);
+    expect("port: out of range keeps the old one", portal_port_or("99999", 1883) == 1883);
+    expect("port: highest legal value", portal_port_or("65535", 1883) == 65535);
+
+    // Brand is hex, 1..255. 0 already meant "keep the old one" before, and
+    // anything wider than a byte used to be silently truncated.
+    expect("brand: hex value", (int)portal_brand_or("10", 16) == 0x10);
+    expect("brand: hex is not decimal", (int)portal_brand_or("11", 16) == 0x11);
+    expect("brand: blank keeps the old one", (int)portal_brand_or("", 16) == 16);
+    expect("brand: zero keeps the old one", (int)portal_brand_or("0", 16) == 16);
+    expect("brand: past a byte keeps the old one", (int)portal_brand_or("1FF", 16) == 16);
+    expect("brand: garbage keeps the old one", (int)portal_brand_or("zz", 16) == 16);
+
+    // --- copying a credentials field that has no terminator ---
+    // conf.sta.ssid[32] / .password[64] hold no NUL at full length, and the
+    // core's own accessors strlen() them. So the copy has to be told how many
+    // bytes are legal rather than looking for a terminator that is not there.
+    {
+        char raw[64]; memset(raw, 'P', sizeof(raw));   // legal max, NOT terminated
+        char dst[65];
+        wifi_field_copy(dst, sizeof(dst), raw, sizeof(raw));
+        expect("full-length field: kept whole", strlen(dst) == 64);
+        expect("full-length field: terminated", dst[64] == '\0');
+
+        char raw2[33]; memset(raw2, 'S', sizeof(raw2));
+        char dst2[33];
+        wifi_field_copy(dst2, sizeof(dst2), raw2, sizeof(raw2));
+        expect("full-length ssid: kept whole", strlen(dst2) == 32);
+
+        // A short field is NUL-padded by the driver; stop there instead of
+        // copying the padding.
+        char raw3[64]; memset(raw3, '\0', sizeof(raw3));
+        strcpy(raw3, "hunter2xx");
+        char dst3[65];
+        wifi_field_copy(dst3, sizeof(dst3), raw3, sizeof(raw3));
+        expect("short field: stops at the terminator", strlen(dst3) == 9);
+
+        // An open network: the field is entirely zeroes.
+        char raw4[64]; memset(raw4, '\0', sizeof(raw4));
+        char dst4[65];
+        wifi_field_copy(dst4, sizeof(dst4), raw4, sizeof(raw4));
+        expect("empty field: empty copy", dst4[0] == '\0');
+    }
+
     if (g_failures) { printf("\n%d failure(s)\n", g_failures); return 1; }
     printf("\nall wifi_policy tests passed\n");
     return 0;
