@@ -42,9 +42,9 @@ static void print_state() {
                   g_state.temp, g_state.fan, fan_str(g_state.fan));
 }
 
-static void i2c_scan_pins(uint8_t sda, uint8_t scl, const char* label) {
+static void i2c_scan_pins(uint8_t sda, uint8_t scl, uint32_t freq, const char* label) {
     Wire.end();
-    Wire.begin(sda, scl);
+    Wire.begin(sda, scl, freq);
     Serial.printf("[i2c] scanning 0x08..0x77 (%s) ...\n", label);
     int found = 0;
     for (uint8_t a = 0x08; a <= 0x77; ++a) {
@@ -62,7 +62,7 @@ static void i2c_scan_pins(uint8_t sda, uint8_t scl, const char* label) {
 }
 
 static void i2c_scan() {
-    i2c_scan_pins(PIN_OLED_SDA, PIN_OLED_SCL, "SDA=GPIO21 SCL=GPIO22");
+    i2c_scan_pins(PIN_OLED_SDA, PIN_OLED_SCL, 100000, "SDA=GPIO21 SCL=GPIO22");
     Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
 }
 
@@ -72,9 +72,27 @@ static void i2c_scan() {
 //: it thinks is its data pin for a clock it will never get, so it never ACKs.
 //: Finding the screen here means the answer is to swap two wires.
 static void i2c_scan_swapped() {
-    i2c_scan_pins(PIN_OLED_SCL, PIN_OLED_SDA, "SWAPPED: SDA=GPIO22 SCL=GPIO21");
+    i2c_scan_pins(PIN_OLED_SCL, PIN_OLED_SDA, 100000, "SWAPPED: SDA=GPIO22 SCL=GPIO21");
     Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
     Serial.println("[i2c] bus back to SDA=GPIO21 SCL=GPIO22");
+}
+
+//: The same scan at progressively slower clocks. Weak pull-ups, long jumper
+//: wires or a breadboard all round off the edges; if they get slow enough, a
+//: module misses bits at 100 kHz and answers nothing -- which looks exactly
+//: like a dead one. If the screen turns up here, the bus is simply too slow-
+//: edged to run at full speed, and the fix is a slower clock or a stronger
+//: pull-up, not a new screen.
+static void i2c_scan_clocks() {
+    const uint32_t freqs[] = {100000, 50000, 25000, 10000, 5000};
+    char label[64];
+    for (size_t i = 0; i < sizeof(freqs) / sizeof(freqs[0]); ++i) {
+        snprintf(label, sizeof(label), "SDA=GPIO21 SCL=GPIO22 @ %lu Hz",
+                 (unsigned long)freqs[i]);
+        i2c_scan_pins(PIN_OLED_SDA, PIN_OLED_SCL, freqs[i], label);
+    }
+    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
+    Serial.println("[i2c] bus back to 100000 Hz");
 }
 
 //: Is the module really on the bus? An I2C scan only ever says "nothing
@@ -83,6 +101,22 @@ static void i2c_scan_swapped() {
 //: pull-ups switched off, the only thing left that can hold a line high is the
 //: module's own pull-up resistor -- so a line that reads low or flaps has
 //: nothing on the far end of it.
+//: Drive a line low, let go, and time how long it takes to climb back up.
+//: 'internal_pull' picks whether the ESP32's own ~45k pull-up helps: false
+//: measures the module's resistor on its own, true measures the bus the way
+//: I2C will actually see it.
+static int rise_us(uint8_t pin, bool internal_pull) {
+    pinMode(pin, OUTPUT_OPEN_DRAIN);
+    digitalWrite(pin, LOW);
+    delayMicroseconds(50);
+    pinMode(pin, internal_pull ? INPUT_PULLUP : INPUT);
+    uint32_t t0 = micros();
+    while (micros() - t0 < 2000) {
+        if (digitalRead(pin) == HIGH) return (int)(micros() - t0);
+    }
+    return -1;
+}
+
 static void wire_check() {
     Wire.end();                        // hand the pins back before poking them
 
@@ -94,31 +128,18 @@ static void wire_check() {
         delay(2);
         int pulled = digitalRead(pin);
 
-        // Drive it low, let go, time the recovery. Reading a pin without
-        // discharging it first proves nothing: a floating pin keeps its charge
-        // for milliseconds. With the module's pull-up on the wire it is back up
-        // in microseconds; with nothing on the far end it never makes it.
-        pinMode(pin, OUTPUT_OPEN_DRAIN);
-        digitalWrite(pin, LOW);
-        delayMicroseconds(50);
-        pinMode(pin, INPUT);
-        uint32_t t0  = micros();
-        int      rise = -1;
-        while (micros() - t0 < 2000) {
-            if (digitalRead(pin) == HIGH) { rise = (int)(micros() - t0); break; }
-        }
-        if (rise < 0) {
-            Serial.printf("[wire] %s GPIO%d: pull-up=%d, released from low -> never came back up\n",
-                          n, pin, pulled);
-        } else {
-            Serial.printf("[wire] %s GPIO%d: pull-up=%d, released from low -> up in %d us\n",
-                          n, pin, pulled, rise);
-        }
+        // Reading a pin without discharging it first proves nothing: a floating
+        // pin keeps its charge for milliseconds. Time the climb back instead.
+        int alone = rise_us(pin, false);   // the module's pull-up by itself
+        int real  = rise_us(pin, true);    // plus ours: the edge I2C gets
+
+        Serial.printf("[wire] %s GPIO%d: idle=%d | module's pull-up alone -> %d us | with ours too -> %d us\n",
+                      n, pin, pulled, alone, real);
         pinMode(pin, INPUT_PULLUP);
     }
 
-    Serial.println("[wire] up in a few us  -> the module's pull-up resistor is on that wire (present + powered)");
-    Serial.println("[wire] never comes up -> nothing on that wire: no module, no 3V3, or wrong hole");
+    Serial.println("[wire] -1 = never rises. 'alone' in a few us -> module on that wire, powered.");
+    Serial.println("[wire] 'with ours too' above ~1 us -> edges too slow for 100 kHz: try q.");
 
     Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
 }
@@ -139,6 +160,7 @@ static void print_help() {
     Serial.println("  i           I2C scan (find the OLED)");
     Serial.println("  w           wire check (is the OLED module actually there?)");
     Serial.println("  x           I2C scan with SDA/SCL swapped (cable in backwards?)");
+    Serial.println("  q           I2C scan at slower clocks (edges too slow for 100 kHz?)");
     Serial.println("  o           OLED test patterns");
     Serial.println("  d           dump current state");
     Serial.println("  r           send REFERENCE frame (midea1 on/cool/24/auto)");
@@ -179,6 +201,10 @@ static void handle_line(char* line) {
 
         case 'x':
             i2c_scan_swapped();
+            break;
+
+        case 'q':
+            i2c_scan_clocks();
             break;
 
         case 'o':
