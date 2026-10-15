@@ -482,15 +482,22 @@ Wants=mosquitto.service
 
 [Service]
 User=pi
-WorkingDirectory=/opt/ac-bot
-EnvironmentFile=/opt/ac-bot/.env
-ExecStart=/opt/ac-bot/.venv/bin/python -m app.main
+WorkingDirectory=/home/dirj/project/AirConditionRemoteServer
+EnvironmentFile=/home/dirj/project/AirConditionRemoteServer/.env
+ExecStart=/home/dirj/project/AirConditionRemoteServer/.venv/bin/python -m app.main
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+> 上面是 2026-10-12 的设计草案。**真正下发到树莓派的是
+> [`deploy/ac-bot.service`](../deploy/ac-bot.service)**：`User=dirj`（这台机器上没有 `pi` 用户）、
+> 多了 `StateDirectory=ac-bot` / `Environment=DB_PATH=/var/lib/ac-bot/ac-bot.sqlite3`，
+> 以及 `NoNewPrivileges` / `PrivateTmp` / `Nice` 三条加固。检出位置
+> **`~/project/AirConditionRemoteServer`**（2026-10-15 从 `/opt/ac-bot` 迁入，
+> 见 [`feishu-bringup.md`](feishu-bringup.md) §2）。
 
 ---
 
@@ -517,7 +524,7 @@ AirConditionRemoteServer/
     test_store.py      # ✅ 卡片映射
   deploy/
     mosquitto-ac.conf  # ✅ 已在树莓派部署并验证
-    ac-bot.service     # ✅ 注意 User=dirj（树莓派上没有 pi 用户）
+    ac-bot.service     # ✅ 注意 User=dirj（树莓派上没有 pi 用户）；检出在 ~/project/AirConditionRemoteServer
   docs/
     interface-spec.md  # 本文件
     mqtt-bringup.md    # MQTT 链路验证记录 + 环境事实
