@@ -1,54 +1,105 @@
 #include "web_config.h"
 #include <Arduino.h>
+#include <WiFi.h>
 #include <WiFiManager.h>
 #include "config.h"
+#include "pins.h"
+#include "display.h"
 #include "serial_console.h"
+#include "wifi_policy.h"
 
-void web_config_run(AppConfig& cfg) {
-    // ---------------------------------------------------------------------
-    // 1) Prefer credentials we already hold in our OWN config. This is how a
-    //    bench-provisioned board (serial `set ssid` / `set pass`) comes up:
-    //    no phone, no captive portal. WiFiManager only knows the credentials
-    //    it saved itself, so without this branch a provisioned board would
-    //    still block on the portal even though our config is complete.
-    // ---------------------------------------------------------------------
-    bool haveCreds = cfg.wifi_ssid.length() && cfg.wifi_pass.length();
-    if (haveCreds) {
-        Serial.printf("[wifi] trying stored ssid '%s'", cfg.wifi_ssid.c_str());
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(cfg.wifi_ssid.c_str(), cfg.wifi_pass.c_str());
-    } else {
-        Serial.println("[wifi] no stored WiFi credentials.");
-        Serial.println("[wifi] serial provisioning window open -- try:");
-        Serial.println("[wifi]   scan | set ssid <name> | set pass <pw> | set host <ip> | restart");
+// How long the BOOT button has to be held before we treat it as "I want to
+// configure this device". Long enough not to fire on a stray bump.
+static const uint32_t RESET_HOLD_MS = 3000;
+
+bool reset_button_hold_detected() {
+    static bool     down  = false;
+    static uint32_t since = 0;
+    static bool     fired = false;
+
+    if (digitalRead(PIN_BOOT) != LOW) {
+        down = false;
+        fired = false;
+        return false;
+    }
+    if (!down) {
+        down  = true;
+        since = millis();
+        return false;
+    }
+    if (!fired && (uint32_t)(millis() - since) >= RESET_HOLD_MS) {
+        fired = true;
+        return true;
+    }
+    return false;
+}
+
+static void reboot_into_portal(const char* why) {
+    Serial.printf("[wifi] %s -> WiFi + config cleared, rebooting\n", why);
+    web_config_reset();
+    display_lines("AirCon Gateway", "config cleared", "rebooting...", "");
+    delay(800);
+    ESP.restart();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: try the credentials WE hold (serial `set ssid`/`set pass`, or the
+// last config portal run). WiFiManager only knows what it saved itself, so
+// without this a provisioned board would still block on the portal even though
+// its config is complete.
+// ---------------------------------------------------------------------------
+static bool try_stored(AppConfig& cfg) {
+    if (cfg.wifi_ssid.isEmpty()) {
+        Serial.println("[wifi] no stored WiFi credentials -> config portal");
+        return false;
     }
 
-    // Keep polling the serial console while we wait. This window is the only
-    // chance to provision a board that has no credentials: the captive portal
-    // below blocks setup(), so the console (in loop()) would never run again.
-    unsigned long t0 = millis();
+    Serial.printf("[wifi] trying stored ssid '%s'", cfg.wifi_ssid.c_str());
+    WiFi.mode(WIFI_STA);
+    // We keep the credentials ourselves, and writing them to the driver's NVS
+    // on every boot only burns the flash write budget.
+    WiFi.persistent(false);
+    WiFi.begin(cfg.wifi_ssid.c_str(), cfg.wifi_pass.c_str());
+
+    char line[48];
+    snprintf(line, sizeof(line), "trying: %.24s", cfg.wifi_ssid.c_str());
+    display_lines("AirCon Gateway", line, "wait 20s", "hold BOOT to reset");
+
+    unsigned long t0      = millis();
     unsigned long lastDot = 0;
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_STA_TIMEOUT_MS) {
         delay(50);
+        // The console must stay reachable: this window is the only chance to
+        // provision a board that has no credentials.
         serial_console_poll(cfg);
-        if (haveCreds && millis() - lastDot >= 1000) { lastDot = millis(); Serial.print('.'); }
+        if (reset_button_hold_detected()) reboot_into_portal("BOOT held");
+        if (millis() - lastDot >= 1000) { lastDot = millis(); Serial.print('.'); }
     }
     Serial.println();
 
     if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("[wifi] connected, IP=%s\n", WiFi.localIP().toString().c_str());
         WiFi.setHostname(cfg.device_name.c_str());
-        return;
+        return true;
     }
-    Serial.printf("[wifi] %s -> config portal\n",
-                  haveCreds ? "stored credentials did not connect" : "nothing provisioned");
+    Serial.println("[wifi] stored credentials did not connect -> config portal");
+    return false;
+}
 
-    // ---------------------------------------------------------------------
-    // 2) Otherwise fall back to the WiFiManager captive portal (unchanged).
-    // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Phase 2: the captive portal. Runs NON-BLOCKING so this loop can keep the
+// serial console, the BOOT button and the OLED alive while we wait -- the old
+// blocking autoConnect() froze all three, so a device that had moved house sat
+// on a static "connecting WiFi..." screen and could not even be reset without
+// a serial cable.
+// ---------------------------------------------------------------------------
+static bool wait_portal(AppConfig& cfg) {
     WiFiManager wm;
-    wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
     wm.setDebugOutput(false);
+    wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
+    wm.setConfigPortalBlocking(false);
+    wm.setConnectTimeout(5);        // keep a bad pick from stalling for a minute
+    wm.setAPClientCheck(true);      // a connected phone keeps the portal alive
 
     // Custom fields shown on the config page.
     char host[64];   strncpy(host,   cfg.mqtt_host.c_str(),    sizeof(host) - 1);   host[sizeof(host) - 1] = '\0';
@@ -75,16 +126,51 @@ void web_config_run(AppConfig& cfg) {
     wm.addParameter(&p_dev);
     wm.addParameter(&p_brand);
 
-    Serial.printf("[wifi] connecting (portal: %s)\n", WIFI_PORTAL_AP_NAME);
-    Serial.printf("[wifi] if no saved network works, join AP '%s' (pw '%s') "
-                  "and open http://192.168.4.1\n",
+    Serial.printf("[wifi] portal: join AP '%s' (pw '%s'), open http://192.168.4.1\n",
                   WIFI_PORTAL_AP_NAME, WIFI_PORTAL_AP_PASS);
-    if (!wm.autoConnect(WIFI_PORTAL_AP_NAME, WIFI_PORTAL_AP_PASS)) {
-        Serial.println("[wifi] portal timed out, restarting");
-        delay(1000);
-        ESP.restart();
+    display_lines("AirCon Gateway", "portal open", "AP: AC-Gateway-Setup",
+                  "pw: acgateway");
+
+    // In non-blocking mode this raises the AP + web server and returns at once;
+    // process() below is what then services requests. Calling process() without
+    // this would leave the portal shut for good, and the linker silently drops
+    // the whole captive portal as dead code when nothing calls it.
+    wm.startConfigPortal(WIFI_PORTAL_AP_NAME, WIFI_PORTAL_AP_PASS);
+
+    unsigned long t0 = millis();
+    while (!wm.process()) {
+        // Our own clock, not the library's: it bumps its portal-start time on
+        // every web request, which would extend the timeout indefinitely. A
+        // phone that is actually attached to the AP holds it open too -- nobody
+        // gets rebooted halfway through typing in their MQTT settings.
+        if (WiFi.softAPgetStationNum() > 0) {
+            t0 = millis();
+        } else if (millis() - t0 > WIFI_PORTAL_TIMEOUT_S * 1000UL) {
+            Serial.println("[wifi] portal timed out, restarting");
+            display_lines("AirCon Gateway", "portal timeout", "rebooting...", "");
+            delay(1000);
+            ESP.restart();
+        }
+        serial_console_poll(cfg);
+        if (reset_button_hold_detected()) reboot_into_portal("BOOT held");
+        delay(10);
     }
-    Serial.printf("[wifi] connected, IP=%s\n", WiFi.localIP().toString().c_str());
+
+    // The portal connected to whatever the user picked, so THAT is the network
+    // we persist. Recording only the SSID when nothing was stored (and never
+    // the password) is what used to leave a moved device pointing at its old
+    // network on every subsequent boot.
+    String portal_ssid = WiFi.SSID();
+    String portal_pass = WiFi.psk();
+    if (portal_ssid.isEmpty()) {          // fall back to what WiFiManager holds
+        portal_ssid = wm.getWiFiSSID();
+        portal_pass = wm.getWiFiPass();
+    }
+
+    WifiCred cred = wifi_cred_after_portal(portal_ssid.c_str(), portal_pass.c_str(),
+                                          cfg.wifi_ssid.c_str(), cfg.wifi_pass.c_str());
+    cfg.wifi_ssid = cred.ssid;
+    cfg.wifi_pass = cred.pass;
 
     // Read the (possibly edited) values back.
     cfg.mqtt_host    = p_host.getValue();
@@ -99,14 +185,15 @@ void web_config_run(AppConfig& cfg) {
     if (cfg.topic_prefix.isEmpty()) cfg.topic_prefix = DEFAULT_TOPIC_PREFIX;
     if (cfg.device_name.isEmpty())  cfg.device_name  = DEFAULT_DEVICE_NAME;
 
-    // Record the SSID the portal joined (display only -- WiFiManager keeps the
-    // password, and we deliberately leave wifi_pass empty so the next boot goes
-    // straight back through the portal path instead of waiting on a dead STA
-    // connect attempt).
-    if (cfg.wifi_ssid.isEmpty()) cfg.wifi_ssid = WiFi.SSID();
-
-    WiFi.setHostname(cfg.device_name.c_str());
     config_store_save(cfg);
+    WiFi.setHostname(cfg.device_name.c_str());
+    Serial.printf("[wifi] connected, IP=%s (saved)\n", WiFi.localIP().toString().c_str());
+    return true;
+}
+
+void web_config_run(AppConfig& cfg) {
+    if (try_stored(cfg)) return;
+    wait_portal(cfg);
 }
 
 void web_config_reset() {

@@ -14,3 +14,12 @@
 // GPIO4 is a plain input/output pin with no strapping or boot role, so it is
 // safe to hold a sensor on it. See docs/wiring.md for the wiring table.
 #define PIN_DHT 4
+
+// ---- BOOT button (GPIO0, on the dev board already) ----
+// Held down for a few seconds this wipes the WiFi + app config and reboots into
+// the config portal -- re-provisioning a device that moved house without a
+// serial cable. INPUT_PULLUP: the button shorts the pin to GND.
+// NOTE: the pin is also the boot-mode strap, so it must be pressed AFTER power
+// on / reset. Holding it while powering up drops the board into the download
+// mode instead.
+#define PIN_BOOT 0

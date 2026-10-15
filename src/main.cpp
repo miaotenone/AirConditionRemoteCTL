@@ -10,6 +10,7 @@
 #include "ir_module.h"
 #include "display.h"
 #include "config_store.h"
+#include "state_store.h"
 #include "web_config.h"
 #include "serial_console.h"
 #include "net_mqtt.h"
@@ -94,7 +95,18 @@ static void apply_pending_command() {
             Serial.printf("[cmd] unknown field '%s' ignored\n", kv.key().c_str());
         }
     }
-    if (!changed) return;
+    if (!changed) {
+        // The command asked for exactly what we already have. There is nothing
+        // for the IR module to do -- but the service's confirmation window is
+        // 5 s wide, and our 30 s state heartbeat does not fit inside it, so a
+        // silent "no change" is what the service reports as "the device never
+        // answered". Echo the state now: no change is still an answer (design
+        // 18.12 #1).
+        net_publish_state(g_cfg, g_state, true);
+        return;
+    }
+
+    state_store_save(g_state);      // remember it before anything else can fail
 
     uint8_t frame[MULTI_PARAM_FRAME_SIZE];
     size_t n = build_multi_param_frame(frame, g_cfg.brand, g_state.power,
@@ -177,6 +189,7 @@ static void failsafe_loop() {
     Serial.println("[failsafe] no contact for 5 min -> AC off");
     g_prev_state = g_state;
     g_state.power = AC_POWER_OFF;
+    state_store_save(g_state);
 
     uint8_t frame[MULTI_PARAM_FRAME_SIZE];
     size_t n = build_multi_param_frame(frame, g_cfg.brand, g_state.power,
@@ -202,18 +215,29 @@ void setup() {
     display_lines("AirCon Gateway", "starting...", "", "");
 
     config_store_load(g_cfg);
+    // The AC is still wherever we left it, so a reboot must not rewrite that.
+    // The configured "initial" values are what a factory-fresh device starts
+    // at, and only what an empty NVS falls back to (design 18.12 #2).
     g_state = g_cfg.initial;
+    if (state_store_load(g_state)) {
+        Serial.println("[state] restoring the remembered AC state");
+    } else {
+        Serial.println("[state] nothing remembered; using the configured initial state");
+    }
     ac_state_clamp(g_state);
 
-    // Escape hatch: send 'r' within 2s of boot to wipe the stored WiFi
-    // credentials + app settings. Use when the saved network is gone (or the
-    // password changed) and the config portal would otherwise never open.
-    Serial.print("[ac-gateway] send 'r' within 2s to reset WiFi+config ... ");
+    // Escape hatch: send 'r' within 2s of boot -- or hold the BOOT button --
+    // to wipe the stored WiFi credentials + app settings. Use when the saved
+    // network is gone (or the password changed) and the config portal would
+    // otherwise never open.
+    pinMode(PIN_BOOT, INPUT_PULLUP);
+    Serial.print("[ac-gateway] send 'r' (or hold BOOT) within 2s to reset WiFi+config ... ");
     bool want_reset = false;
     unsigned long t0 = millis();
     while (millis() - t0 < 2000) {
         int c = Serial.read();
         if (c == 'r' || c == 'R') { want_reset = true; break; }
+        if (reset_button_hold_detected()) { want_reset = true; break; }
         delay(5);
     }
     Serial.println(want_reset ? "RESET" : "ok");
@@ -225,9 +249,8 @@ void setup() {
         ESP.restart();
     }
 
-    // Shown while (and if) the blocking config portal is open.
-    display_lines("AirCon Gateway", "connecting WiFi...",
-                  "AP: AC-Gateway-Setup", "pw: acgateway");
+    // web_config_run() puts up its own per-phase screens ("trying: <ssid>",
+    // "portal open", "portal timeout"), so setup() does not pre-paint one here.
     web_config_run(g_cfg);
 
     display_lines("AirCon Gateway", "WiFi OK",
