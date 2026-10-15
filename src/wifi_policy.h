@@ -37,8 +37,10 @@ unsigned portal_seconds_left(unsigned long now_ms, unsigned long start_ms,
 bool portal_hard_timeout(unsigned long now_ms, unsigned long opened_ms,
                          unsigned long cap_s);
 
-// Port number typed into the portal. "" / unparsable / 0 / out of range all
-// keep the previous value rather than persisting a broken-looking setting.
+// Port number typed into the portal. "" / unparsable / out of range / trailing
+// junk keep the previous value rather than persisting a broken-looking setting.
+// NOTE: 0 is rejected too, which is stricter than the old (uint16_t)atoi() --
+// a blank port used to be persisted as 0.
 unsigned short portal_port_or(const char* text, unsigned short fallback);
 
 // AC brand typed into the portal, as hex, 1..255. Anything else keeps the

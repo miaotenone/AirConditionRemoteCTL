@@ -95,6 +95,14 @@ static bool try_stored(AppConfig& cfg) {
 // The portal's parameters, read back into the config. Shared by the save
 // callback and the post-connect path, because WiFiManager calls them from
 // different places and we need at least one of them to have run.
+//
+// Note on what this can and cannot see: `WiFiManagerParameter::_value` is
+// written ONLY by doParamSave() -- handleWifiSave() never touches it. So
+// getValue() returns what the user submitted, or the value the field was
+// constructed with, and never half-typed text. That makes the call idempotent
+// and safe to repeat on the timeout path (it re-saves the same values).
+// The WiFi SSID and password are NOT among these params: they live in the
+// driver and are read back separately, after a successful connect.
 // ---------------------------------------------------------------------------
 struct PortalFields {
     WiFiManagerParameter* host;
@@ -210,8 +218,11 @@ static bool wait_portal(AppConfig& cfg) {
         // always gets back to controlling the AC. BOOT still resets it early.
         if (portal_hard_timeout(millis(), opened, PORTAL_HARD_TIMEOUT_S)) {
             Serial.println("[wifi] portal open too long, restarting");
+            // The save callback has already persisted the parameters if the user
+            // pressed Save; re-reading them here is a no-op safety net (see the
+            // note in portal_fields_to_cfg).
             portal_fields_to_cfg(cfg, fields);
-            config_store_save(cfg);   // keep whatever they did type
+            config_store_save(cfg);
             display_lines("AirCon Gateway", "portal timeout", "rebooting...", "");
             delay(1000);
             ESP.restart();
@@ -222,8 +233,17 @@ static bool wait_portal(AppConfig& cfg) {
         if (millis() - last_shown >= 1000) {
             last_shown = millis();
             char countdown[24];
-            snprintf(countdown, sizeof(countdown), "portal %us",
-                     (unsigned)portal_seconds_left(millis(), t0, WIFI_PORTAL_TIMEOUT_S));
+            unsigned long left    = portal_seconds_left(millis(), t0, WIFI_PORTAL_TIMEOUT_S);
+            unsigned long hard_left = portal_seconds_left(millis(), opened, PORTAL_HARD_TIMEOUT_S);
+            // While a phone is attached the idle clock keeps restarting, so the
+            // countdown would read "180s" forever and then reboot with no
+            // warning. Inside the last minute, show the ceiling instead -- that
+            // is the deadline that is actually about to fire.
+            if (hard_left <= 60 && hard_left < left) {
+                snprintf(countdown, sizeof(countdown), "reboot %lus", hard_left);
+            } else {
+                snprintf(countdown, sizeof(countdown), "portal %lus", left);
+            }
             Serial.printf("[wifi] %s%s\n", countdown, client ? " (client attached)" : "");
             display_lines("AirCon Gateway", "portal open", countdown,
                           "192.168.4.1");
@@ -243,27 +263,23 @@ static bool wait_portal(AppConfig& cfg) {
     // .password[64] carry NO room for a NUL at full length, so WiFi.SSID() /
     // WiFi.psk() -- which build a String with strlen() on those arrays -- read
     // past the end for a legal 32-char SSID or 64-char passphrase and hand us
-    // the garbage. At WiFiDriverNVS 0xff / 0x00 padding that used to be
-    // persisted as the network name.
+    // the garbage.
+    //
+    // There is deliberately NO fallback to wm.getWiFiSSID(): on ESP32 that is
+    // the very same unbounded String(conf.sta.ssid) over an un-memset'd local,
+    // so it would read stack garbage exactly when esp_wifi_get_config failed.
+    // Nothing is lost by leaving it out -- wifi_cred_after_portal() keeps the
+    // stored credentials when the portal reported no connection.
     wifi_config_t wconf;
     memset(&wconf, 0, sizeof(wconf));
-    esp_err_t got = esp_wifi_get_config(WIFI_IF_STA, &wconf);
-
     char ssid_buf[33];
     char pass_buf[65];
-    if (got == ESP_OK) {
+    if (esp_wifi_get_config(WIFI_IF_STA, &wconf) == ESP_OK) {
         wifi_field_copy(ssid_buf, sizeof(ssid_buf), (const char*)wconf.sta.ssid,     sizeof(wconf.sta.ssid));
         wifi_field_copy(pass_buf, sizeof(pass_buf), (const char*)wconf.sta.password, sizeof(wconf.sta.password));
     } else {
         ssid_buf[0] = '\0';
         pass_buf[0] = '\0';
-    }
-
-    if (ssid_buf[0] == '\0') {          // fall back to what WiFiManager holds
-        String wm_ssid = wm.getWiFiSSID();
-        String wm_pass = wm.getWiFiPass();
-        wifi_field_copy(ssid_buf, sizeof(ssid_buf), wm_ssid.c_str(), wm_ssid.length());
-        wifi_field_copy(pass_buf, sizeof(pass_buf), wm_pass.c_str(), wm_pass.length());
     }
 
     WifiCred cred = wifi_cred_after_portal(ssid_buf, pass_buf,

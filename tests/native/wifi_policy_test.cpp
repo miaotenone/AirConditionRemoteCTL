@@ -124,6 +124,16 @@ int main() {
     expect("port: zero keeps the old one", portal_port_or("0", 1883) == 1883);
     expect("port: out of range keeps the old one", portal_port_or("99999", 1883) == 1883);
     expect("port: highest legal value", portal_port_or("65535", 1883) == 65535);
+    // Trailing rubbish is a typo, not the number it starts with. strtol would
+    // happily return 1883 here, so this is the case the end-pointer guard is
+    // for -- and the fallback differs from 1883, so a dropped guard is caught.
+    expect("port: trailing junk keeps the old one", portal_port_or("1883x", 1884) == 1884);
+    // One past the top of the range, with a fallback that differs from the
+    // parsed value so a mutant returning the fallback blindly is caught.
+    expect("port: 65536 keeps the old one", portal_port_or("65536", 1884) == 1884);
+    // A legal value that differs from the fallback, so a mutant that ignores its
+    // argument cannot pass this one.
+    expect("port: a different legal value wins", portal_port_or("8883", 1883) == 8883);
 
     // Brand is hex, 1..255. 0 already meant "keep the old one" before, and
     // anything wider than a byte used to be silently truncated.
@@ -133,6 +143,12 @@ int main() {
     expect("brand: zero keeps the old one", (int)portal_brand_or("0", 16) == 16);
     expect("brand: past a byte keeps the old one", (int)portal_brand_or("1FF", 16) == 16);
     expect("brand: garbage keeps the old one", (int)portal_brand_or("zz", 16) == 16);
+    // Same end-pointer guard as the port, on the hex parse. 0x10 is 16, so the
+    // fallback of 17 differs from what a dropped guard would return.
+    expect("brand: trailing junk keeps the old one", (int)portal_brand_or("10z", 17) == 17);
+    // A hex value that differs from the fallback, so a mutant that ignores its
+    // argument cannot pass.
+    expect("brand: a different legal value wins", (int)portal_brand_or("12", 16) == 0x12);
 
     // --- copying a credentials field that has no terminator ---
     // conf.sta.ssid[32] / .password[64] hold no NUL at full length, and the
@@ -150,19 +166,33 @@ int main() {
         wifi_field_copy(dst2, sizeof(dst2), raw2, sizeof(raw2));
         expect("full-length ssid: kept whole", strlen(dst2) == 32);
 
-        // A short field is NUL-padded by the driver; stop there instead of
-        // copying the padding.
-        char raw3[64]; memset(raw3, '\0', sizeof(raw3));
-        strcpy(raw3, "hunter2xx");
-        char dst3[65];
+        // A short field is NUL-padded by the driver; stop at the NUL instead of
+        // copying the padding. The bytes AFTER the terminator are deliberately
+        // non-zero, so an implementation that ignores the terminator and copies
+        // the full width fails this rather than passing by accident.
+        char raw3[64]; memset(raw3, 'X', sizeof(raw3));
+        memcpy(raw3, "hunter2xx", 9);
+        raw3[9] = '\0';
+        char dst3[65]; memset(dst3, 'Y', sizeof(dst3));
         wifi_field_copy(dst3, sizeof(dst3), raw3, sizeof(raw3));
         expect("short field: stops at the terminator", strlen(dst3) == 9);
+        // The sentinel past the terminator is untouched, proving the copy
+        // stopped at the NUL rather than running the full width.
+        expect("short field: nothing written past the terminator", dst3[10] == 'Y');
 
         // An open network: the field is entirely zeroes.
         char raw4[64]; memset(raw4, '\0', sizeof(raw4));
         char dst4[65];
         wifi_field_copy(dst4, sizeof(dst4), raw4, sizeof(raw4));
         expect("empty field: empty copy", dst4[0] == '\0');
+
+        // A destination narrower than the source must still terminate and must
+        // never write past dst_size.
+        char raw5[64]; memset(raw5, 'P', sizeof(raw5));
+        char dst5[8]; memset(dst5, 'Y', sizeof(dst5));
+        wifi_field_copy(dst5, sizeof(dst5), raw5, sizeof(raw5));
+        expect("narrow dst: truncated to dst_size - 1", strlen(dst5) == 7);
+        expect("narrow dst: terminated inside the buffer", dst5[7] == '\0');
     }
 
     if (g_failures) { printf("\n%d failure(s)\n", g_failures); return 1; }
