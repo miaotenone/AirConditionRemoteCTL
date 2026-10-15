@@ -24,8 +24,12 @@ bool dht_read(int& temp_c, int& humidity) {
 
     // Plausibility gate. The DHT11 itself only reports 0..50 degC / 20..90% RH,
     // so anything outside a slightly wider band is a bus glitch, not weather.
+    // The floor is the one that bit us: a module with nothing to say answers an
+    // all-zero frame, and that frame passes the checksum -- so 0% RH is the
+    // absence of a reading, not a dry room. One of these reached the history
+    // looking like a real 0 degC morning and dragged the chart down with it.
     if (r.temperature < -20.0f || r.temperature > 60.0f) return false;
-    if (r.humidity < 0.0f || r.humidity > 100.0f) return false;
+    if (r.humidity < 5.0f || r.humidity > 100.0f) return false;
 
     temp_c   = (int)lroundf(r.temperature);
     humidity = (int)lroundf(r.humidity);
