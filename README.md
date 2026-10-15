@@ -25,6 +25,7 @@ src/
   config_store.{h,cpp}      NVS 配置读写
   state_store.{h,cpp}       NVS 里记住的空调状态（重启 / 刷固件不丢）
   web_config.{h,cpp}        WiFiManager 配网 + 配置页
+  wifi_policy.{h,cpp}       配网策略（该记住哪套凭据 / 门户倒计时，纯函数，可原生单测）
   selftest.cpp              硬件自检固件（`[env:selftest]`，不依赖 WiFi）
   config.h / pins.h         默认参数与引脚
 docs/
@@ -161,7 +162,7 @@ retained 标志和 `ts` 把"重放"和"刚发生"区分开**。`hb` 反过来必
 > - **OLED**：I2C 扫描到 `0x3C`，显示正常（SH1106 驱动），屏幕上直接显示本机 IP
 > - **红外模块**：UART 双向 OK，每条指令都回 ACK `68 08 00 00 01 9C 9D 16`（见 `docs/protocol.md`）
 > - **美的1**：开机 / 温度 / 风速，**空调均正确响应**
-> - **配网**：手机连 `AC-Gateway-Setup` → 配置页保存 → `[wifi] connected, IP=192.168.8.105`；断电 / 重新烧录后**自动重连，无需重配**（NVS 持久化）
+> - **配网**：手机连 `AC-Gateway-Setup` → 配置页保存 → `[wifi] connected, IP=192.168.8.105 (saved)`；断电 / 重新烧录后**自动重连，无需重配**（NVS 持久化）
 > - **OTA**：`ac-gateway.local:3232`（mDNS 可用，后续可直接 OTA 升级）
 >
 > 尚缺：**MQTT 端到端**（等树莓派 broker 就绪）。
@@ -209,7 +210,7 @@ python -m platformio device monitor              # 打开串口菜单
 | 步骤 | 操作 | 预期现象 |
 |---|---|---|
 | 0.1 | `pio run -t upload` 后开 `pio device monitor` | 打印 `[ac-gateway] boot`，无反复重启 |
-| 0.2 | 观察串口 | 出现 `[wifi] connecting (portal: AC-Gateway-Setup)` |
+| 0.2 | 观察串口 | 出现 `[wifi] trying stored ssid '...'`（首次未配网则直接 `[wifi] portal: join AP ...`） |
 
 ### 1. OLED（先接屏，其余不接）
 
@@ -218,7 +219,7 @@ python -m platformio device monitor              # 打开串口菜单
 | 现象 | 结论 / 处理 |
 |---|---|
 | 4 行：`AirCon Gateway` / `AC ON  COOL  24C` / `Fan AUTO   Net OK` / `192.168.x.x` | ✅ 正常 |
-| 首启（未配网）时显示 `connecting WiFi...` + `AP: AC-Gateway-Setup` / `pw: acgateway` | ✅ 正常（配网门户提示） |
+| 首启（未配网）时显示 `portal open` + `portal <秒>` + `192.168.4.1` | ✅ 正常（配网门户提示 + 倒计时） |
 | 第四行 `no IP` | 还没连上 WiFi |
 | 串口 `[oled] no display answering -> running headless` | 总线上**没有任何屏应答**。先查**共地**（见 §2：模块走独立电源、ESP32 走 USB 时必须共地）—— 缺共地就是这样：上拉还在、就是不应答；其次才是没接 / 没供电 / 线松。网关照常跑，只是不显示 |
 | 复位（刷机、按 reset）后像死机、串口停在 `[oled]` 附近 | 复位打断了 OLED 传输、从机压住总线。固件现在**开机先做一次总线恢复**（九拍时钟 + STOP）再接管 I2C，正常不会再出现 |
@@ -259,22 +260,31 @@ python -m platformio device monitor              # 打开串口菜单
 
 | 步骤 | 操作 | 预期现象 |
 |---|---|---|
-| 3.1 | 手机连热点 `AC-Gateway-Setup`（密码 `acgateway`） | OLED 显示 `connecting WiFi...` + 热点名/密码；浏览器自动弹配置页，否则手动开 `192.168.4.1` |
-| 3.2 | 选你家 **2.4GHz** WiFi、填密码（+ MQTT 树莓派 IP / 1883）后保存 | 热点消失，串口 `[wifi] connected, IP=192.168.x.x` |
+| 3.1 | 手机连热点 `AC-Gateway-Setup`（密码 `acgateway`） | OLED 显示 `portal open` + `portal <剩余秒数>` 倒计时 + `192.168.4.1`；浏览器自动弹配置页，否则手动开 `192.168.4.1` |
+| 3.2 | 选你家 **2.4GHz** WiFi、填密码（+ MQTT 树莓派 IP / 1883）后保存 | 热点消失，串口 `[wifi] connected, IP=192.168.x.x (saved)` |
 | 3.3 | 断电再上电（或重新烧录） | 自动重连同一 IP，**不再开热点**（配置在 NVS）|
+
+> 换地方（搬到新 WiFi）时也一样：开机后先试存的网络 20 秒（OLED `trying: <ssid>`），失败自动开门户，
+> 手机配**一次**后新网络就写回 NVS 了，**之后每次开机直连，不用再配**。
 
 > ⚠️ ESP32 **只支持 2.4GHz**。若保存后连不上、串口反复重连，多半是连到了 5GHz 段或密码错。
 
-### 3.4 配网逃生通道（`r` 恢复出厂）
+### 3.4 配网逃生通道（BOOT 长按 / 串口 `r`）
 
-配错网 / 换路由器连不上 / 串口出现 `4WAY_HANDSHAKE_TIMEOUT` 时，**上电后 2 秒内**从串口发一个字符 `r`：
+配错网 / 换路由器连不上 / 串口出现 `4WAY_HANDSHAKE_TIMEOUT` 时，**不用插电脑**：
+
+| 方式 | 操作 | 说明 |
+|---|---|---|
+| **BOOT 按键**（推荐） | **上电之后**按住板载 `BOOT` 键 **3 秒** | 清 WiFi 凭据 + 应用配置并重启，下次开机直接进配网门户 |
+| 串口 `r` | **上电后 2 秒内**从串口发一个字符 `r` | 同上 |
 
 ```
-[ac-gateway] send 'r' within 2s to reset WiFi+config ... RESET
-[ac-gateway] WiFi + config cleared, rebooting
+[ac-gateway] BOOT held -> WiFi + config cleared, rebooting
 ```
 
-会清掉 WiFi 凭据 + 应用配置并重启，下次开机重新进入配网门户，**不用重新烧录**。
+> BOOT 长按在**任何阶段**都有效：正常运行中、开机试存的 20 秒里、配网门户开着的时候。
+> ⚠️ 顺序别搞反：**先上电/复位，再按 BOOT**。上电前就按住 BOOT 会把板子带进下载模式（烧录模式），不是恢复出厂。
+
 
 ### 3.5 串口配网（免手机，联调推荐）
 
