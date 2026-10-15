@@ -159,23 +159,77 @@ static void ir_line_check() {
     int tx_rise = rise_us(PIN_IR_TX, false);   // is something else on OUR tx?
     Serial.printf("[ir ] our TX (GPIO%d) released from low -> %d us\n", PIN_IR_TX, tx_rise);
 
-    bool rx_driven = rx_rise >= 0;
-    bool tx_driven = tx_rise >= 0;
-    if (rx_driven && !tx_driven) {
-        Serial.println("[ir ] verdict: crossed correctly -- the module's TX drives our RX");
-    } else if (!rx_driven && tx_driven) {
-        Serial.println("[ir ] verdict: STRAIGHT THROUGH -- the module's TX sits on our TX pin");
-        Serial.println("[ir ]          swap the two data wires (ours TX <-> theirs RX)");
-    } else if (!rx_driven && !tx_driven) {
-        Serial.println("[ir ] verdict: nothing is holding either line up -- but that alone");
-        Serial.println("[ir ]          proves nothing: a module's TX may idle high-Z and only");
-        Serial.println("[ir ]          drive while it talks, which reads exactly like this.");
-        Serial.println("[ir ]          Send a frame ('r') and go by the ack instead.");
+    // Only our RX line tells us anything: our own UART keeps driving our TX pin
+    // whatever we do to it, so that reading is always "held up". Our RX is held
+    // up by whatever the module end does -- a driven TX, or the pull-up on a
+    // module that is merely sitting there. A floating RX comes back slowly or
+    // not at all, and then picks up our own transmission as crosstalk.
+    if (rx_rise >= 0) {
+        Serial.println("[ir ] our RX is held up: something on the module end is there");
     } else {
-        Serial.println("[ir ] verdict: both lines driven -- unexpected, tell the maintainer");
+        Serial.println("[ir ] our RX stays down: nothing on the module end is holding it");
+        Serial.println("[ir ] (a module's TX may idle high-Z -- go by 'k' to be sure)");
     }
 
-    ir_module_begin();                 // hand the pins back to Serial2
+    // Hand the pins back to Serial2 -- properly. A second begin() on an already
+    // running UART does not re-attach the pins, so without the end() first the
+    // link stays dead and the next measurement reads as "module silent".
+    // Measured: 'k' straight after 'u' scores 0/8; after a reboot, 8/8.
+    Serial2.end();
+    delay(20);
+    ir_module_begin();
+}
+
+//: Send the module a run of frames and count how many it answers.
+//:
+//: A single ack proves almost nothing -- a link with a poor ground reference
+//: answers every now and then. The count is what moves: a starved link answers
+//: some of the time, a healthy one answers every time. The frames vary (24/25
+//: degrees) so a module that skips repeats cannot masquerade as a bad link.
+//: Power stays OFF, so nothing here can switch the air conditioner on.
+static void ir_ack_sweep() {
+    static const uint8_t ACK[8] = {0x68, 0x08, 0x00, 0x00, 0x01, 0x9C, 0x9D, 0x16};
+    const int RUNS = 8;
+    int ok = 0;
+
+    Serial.printf("[ir ] %d frames, up to 1500 ms each for the ack (AC stays off)\n", RUNS);
+    for (int n = 0; n < RUNS; ++n) {
+        uint8_t frame[MULTI_PARAM_FRAME_SIZE];
+        uint8_t temp = (n % 2) ? 25 : 24;
+        build_multi_param_frame(frame, g_brand, AC_POWER_OFF, AC_MODE_COOL,
+                                temp, AC_FAN_AUTO);
+        ir_module_send(frame, MULTI_PARAM_FRAME_SIZE);
+
+        uint8_t rx[64];
+        size_t got = 0;
+        bool acked = false;
+        uint32_t t0 = millis();
+        while (millis() - t0 < 1500 && !acked) {
+            while (got < sizeof(rx) && Serial2.available()) {
+                rx[got++] = (uint8_t)Serial2.read();
+                for (size_t i = 0; i + sizeof(ACK) <= got; ++i) {
+                    size_t j = 0;
+                    while (j < sizeof(ACK) && rx[i + j] == ACK[j]) ++j;
+                    if (j == sizeof(ACK)) { acked = true; break; }
+                }
+            }
+        }
+        if (acked) ++ok;
+        Serial.printf("[ir ] %d/%d: %-6s (%u bytes, %lu ms)\n", n + 1, RUNS,
+                      acked ? "ack" : "no ack",
+                      (unsigned)got, (unsigned long)(millis() - t0));
+        delay(300);
+    }
+
+    Serial.printf("[ir ] score %d/%d\n", ok, RUNS);
+    if (ok == RUNS) {
+        Serial.println("[ir ] solid: every frame answered");
+    } else if (ok == 0) {
+        Serial.println("[ir ] silent: check the module's power and both data wires");
+    } else {
+        Serial.println("[ir ] answers only sometimes -- a marginal link");
+        Serial.println("[ir ] (typically the ground between the ESP32 and its supply)");
+    }
 }
 
 static void send_current(const char* why) {
@@ -196,6 +250,7 @@ static void print_help() {
     Serial.println("  x           I2C scan with SDA/SCL swapped (cable in backwards?)");
     Serial.println("  q           I2C scan at slower clocks (edges too slow for 100 kHz?)");
     Serial.println("  u           IR line check (are the module's TX/RX crossed?)");
+    Serial.println("  k           IR ack sweep: 8 frames, is the link solid or marginal?");
     Serial.println("  o           OLED test patterns");
     Serial.println("  d           dump current state");
     Serial.println("  r           send REFERENCE frame (midea1 on/cool/24/auto)");
@@ -244,6 +299,10 @@ static void handle_line(char* line) {
 
         case 'u':
             ir_line_check();
+            break;
+
+        case 'k':
+            ir_ack_sweep();
             break;
 
         case 'o':
