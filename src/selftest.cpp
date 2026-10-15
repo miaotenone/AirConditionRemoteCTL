@@ -144,6 +144,40 @@ static void wire_check() {
     Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
 }
 
+//: Which way round are the IR module's two data wires?
+//:
+//: The module's TX is a driven output; its RX is a high-impedance input. So
+//: pull each of our lines low, let go, and see who pulls it back up:
+//:   our RX is driven  -> the module's TX is on our RX   (crossed: correct)
+//:   our TX is driven  -> the module's TX is on our TX   (straight: wrong)
+//: Nothing driving either line means neither pin sees a powered output -- and
+//: a straight-through loom is exactly what makes the RX side read as an echo
+//: of our own transmissions: it is crosstalk from the wire running next to it.
+static void ir_line_check() {
+    int rx_rise = rise_us(PIN_IR_RX, false);   // who holds OUR rx up?
+    Serial.printf("[ir ] our RX (GPIO%d) released from low -> %d us\n", PIN_IR_RX, rx_rise);
+    int tx_rise = rise_us(PIN_IR_TX, false);   // is something else on OUR tx?
+    Serial.printf("[ir ] our TX (GPIO%d) released from low -> %d us\n", PIN_IR_TX, tx_rise);
+
+    bool rx_driven = rx_rise >= 0;
+    bool tx_driven = tx_rise >= 0;
+    if (rx_driven && !tx_driven) {
+        Serial.println("[ir ] verdict: crossed correctly -- the module's TX drives our RX");
+    } else if (!rx_driven && tx_driven) {
+        Serial.println("[ir ] verdict: STRAIGHT THROUGH -- the module's TX sits on our TX pin");
+        Serial.println("[ir ]          swap the two data wires (ours TX <-> theirs RX)");
+    } else if (!rx_driven && !tx_driven) {
+        Serial.println("[ir ] verdict: nothing is holding either line up -- but that alone");
+        Serial.println("[ir ]          proves nothing: a module's TX may idle high-Z and only");
+        Serial.println("[ir ]          drive while it talks, which reads exactly like this.");
+        Serial.println("[ir ]          Send a frame ('r') and go by the ack instead.");
+    } else {
+        Serial.println("[ir ] verdict: both lines driven -- unexpected, tell the maintainer");
+    }
+
+    ir_module_begin();                 // hand the pins back to Serial2
+}
+
 static void send_current(const char* why) {
     uint8_t frame[MULTI_PARAM_FRAME_SIZE];
     size_t n = build_multi_param_frame(frame, g_brand, g_state.power,
@@ -161,6 +195,7 @@ static void print_help() {
     Serial.println("  w           wire check (is the OLED module actually there?)");
     Serial.println("  x           I2C scan with SDA/SCL swapped (cable in backwards?)");
     Serial.println("  q           I2C scan at slower clocks (edges too slow for 100 kHz?)");
+    Serial.println("  u           IR line check (are the module's TX/RX crossed?)");
     Serial.println("  o           OLED test patterns");
     Serial.println("  d           dump current state");
     Serial.println("  r           send REFERENCE frame (midea1 on/cool/24/auto)");
@@ -205,6 +240,10 @@ static void handle_line(char* line) {
 
         case 'q':
             i2c_scan_clocks();
+            break;
+
+        case 'u':
+            ir_line_check();
             break;
 
         case 'o':
