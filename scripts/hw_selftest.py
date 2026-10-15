@@ -4,8 +4,8 @@
 Resets the board, captures the boot banner, then sends a few self-test
 commands and prints everything the firmware replies.
 
-    python scripts/hw_selftest.py COM16
-    python scripts/hw_selftest.py COM16 --no-reset --cmds h i o
+    python scripts/hw_selftest.py              # auto-detects the port
+    python scripts/hw_selftest.py COM11 --no-reset --cmds h i o
 """
 import argparse
 import sys
@@ -15,6 +15,8 @@ try:
     import serial
 except ImportError:
     sys.exit("pyserial missing:  python -m pip install pyserial")
+
+from _port import resolve_port
 
 
 def read_for(ser, seconds, quiet_gap=0.5):
@@ -45,7 +47,7 @@ def reset_into_run(ser):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("port")
+    ap.add_argument("port", nargs="?", help="defaults to the only USB serial port")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--no-reset", action="store_true")
     ap.add_argument("--cmds", nargs="*", default=["h", "i", "d", "r"])
@@ -53,7 +55,7 @@ def main():
     args = ap.parse_args()
 
     ser = serial.Serial()
-    ser.port = args.port
+    ser.port = resolve_port(args.port)
     ser.baudrate = args.baud
     ser.timeout = 0.1
     ser.dtr = False

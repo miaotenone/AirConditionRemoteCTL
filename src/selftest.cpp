@@ -4,8 +4,11 @@
 // It does NOT use WiFi/MQTT at all: it opens a serial menu so you can prove,
 // one piece at a time, that the OLED and the IR module work.
 //
-//   pio run -e selftest -t upload --upload-port COM16
-//   pio device monitor -p COM16
+//   pio run -e selftest -t upload
+//   pio device monitor
+//
+// (Ports auto-detect; pass --upload-port / -p if several USB serial devices
+//  are attached. The COM number changes when the board is replugged.)
 //
 #ifdef AC_SELFTEST
 

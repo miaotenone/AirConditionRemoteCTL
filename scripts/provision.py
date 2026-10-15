@@ -2,8 +2,8 @@
 
     python scripts/provision.py [PORT] --ssid NAME --pass PW --host IP [options]
 
-    python scripts/provision.py COM16 --windows-profile HUAWEI-B311-98C3 \
-                                     --host 192.168.8.103
+    python scripts/provision.py --windows-profile HUAWEI-B311-98C3 \
+                               --host 192.168.8.103
 
 Options
     --ssid / --pass           WiFi network to join
@@ -28,6 +28,8 @@ import sys
 import time
 
 import serial
+
+from _port import resolve_port
 
 KEY_MARKERS = ("关键内容", "Key Content")
 SECRET_KEYS = ("pass", "mqttpass")
@@ -88,7 +90,7 @@ def masked(key, value):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("port", nargs="?", default="COM16")
+    ap.add_argument("port", nargs="?", help="defaults to the only USB serial port")
     ap.add_argument("--ssid")
     ap.add_argument("--pass", dest="pw")
     ap.add_argument("--windows-profile", metavar="NAME")
@@ -122,7 +124,7 @@ def main():
         return 2
 
     ser = serial.Serial()
-    ser.port = args.port
+    ser.port = resolve_port(args.port)
     ser.baudrate = 115200
     ser.timeout = 0.1
     ser.dtr = False

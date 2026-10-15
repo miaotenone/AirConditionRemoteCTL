@@ -21,6 +21,8 @@ import time
 
 import serial
 
+from _port import resolve_port
+
 
 def read_for(ser, secs, quiet=0.6):
     end = time.time() + secs
@@ -37,14 +39,14 @@ def read_for(ser, secs, quiet=0.6):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("port", nargs="?", default="COM16")
+    ap.add_argument("port", nargs="?", help="defaults to the only USB serial port")
     ap.add_argument("--no-reset", action="store_true")
     ap.add_argument("--wait", type=float, default=3.0, help="seconds to read per command")
     ap.add_argument("cmds", nargs="*", help="console commands to send")
     args = ap.parse_args()
 
     ser = serial.Serial()
-    ser.port = args.port
+    ser.port = resolve_port(args.port)
     ser.baudrate = 115200
     ser.timeout = 0.1
     ser.dtr = False

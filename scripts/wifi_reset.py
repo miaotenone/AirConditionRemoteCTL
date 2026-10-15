@@ -1,6 +1,6 @@
 """Trigger the firmware's boot-time reset hatch (wipe WiFi + config).
 
-    python scripts/wifi_reset.py [PORT]
+    python scripts/wifi_reset.py [PORT]      # PORT defaults to the only USB serial port
 
 The main firmware listens for an 'r' during the first 2 s of boot; on seeing
 it, it erases the stored WiFi credentials and app config and reboots, so the
@@ -13,9 +13,11 @@ import time
 
 import serial
 
+from _port import resolve_port
+
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else "COM16"
+    port = resolve_port(sys.argv[1] if len(sys.argv) > 1 else None)
 
     s = serial.Serial()
     s.port = port

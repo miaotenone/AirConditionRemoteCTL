@@ -11,9 +11,11 @@ import time
 
 import serial
 
+from _port import resolve_port
+
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else "COM16"
+    port = resolve_port(sys.argv[1] if len(sys.argv) > 1 else None)
     secs = float(sys.argv[2]) if len(sys.argv) > 2 else 12.0
 
     s = serial.Serial()
