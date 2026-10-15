@@ -12,4 +12,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "== ac_state =="
 g++ -std=c++17 -I src tests/native/ac_state_test.cpp src/ac_state.cpp src/ac_encoder.cpp -o build/ac_state_test.exe
 & build/ac_state_test.exe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "== wifi_policy =="
+g++ -std=c++17 -I src tests/native/wifi_policy_test.cpp src/wifi_policy.cpp -o build/wifi_policy_test.exe
+& build/wifi_policy_test.exe
 exit $LASTEXITCODE

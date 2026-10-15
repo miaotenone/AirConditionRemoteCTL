@@ -8,6 +8,9 @@ ref/
 # Native test artifacts
 build/
 
+# SDD execution ledger / briefs (scratch, not source)
+.superpowers/
+
 # Python bytecode from scripts/ (which share the _port helper)
 __pycache__/
 *.pyc
