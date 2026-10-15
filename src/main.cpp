@@ -281,6 +281,19 @@ void loop() {
     serial_console_poll(g_cfg);
     net_loop();
 
+    // Re-provisioning without a cable: hold BOOT for 3 s at any point while
+    // running to wipe the WiFi + app config and reboot into the portal. The
+    // same press works during the connect window and while the portal is open
+    // (see web_config.cpp), so a device that moved house is recoverable
+    // whatever stage it is stuck at.
+    if (reset_button_hold_detected()) {
+        web_config_reset();
+        display_lines("AirCon Gateway", "config cleared", "rebooting...", "");
+        Serial.println("[ac-gateway] BOOT held -> WiFi + config cleared, rebooting");
+        delay(800);
+        ESP.restart();
+    }
+
     if (g_cmd_pending) {
         g_cmd_pending = false;
         apply_pending_command();
