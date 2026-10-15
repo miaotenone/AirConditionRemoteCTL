@@ -260,8 +260,10 @@ static bool wait_portal(AppConfig& cfg) {
     }
 
     if (ssid_buf[0] == '\0') {          // fall back to what WiFiManager holds
-        wifi_field_copy(ssid_buf, sizeof(ssid_buf), wm.getWiFiSSID().c_str(), strlen(wm.getWiFiSSID().c_str()));
-        wifi_field_copy(pass_buf, sizeof(pass_buf), wm.getWiFiPass().c_str(), strlen(wm.getWiFiPass().c_str()));
+        String wm_ssid = wm.getWiFiSSID();
+        String wm_pass = wm.getWiFiPass();
+        wifi_field_copy(ssid_buf, sizeof(ssid_buf), wm_ssid.c_str(), wm_ssid.length());
+        wifi_field_copy(pass_buf, sizeof(pass_buf), wm_pass.c_str(), wm_pass.length());
     }
 
     WifiCred cred = wifi_cred_after_portal(ssid_buf, pass_buf,
