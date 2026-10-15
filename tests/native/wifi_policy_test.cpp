@@ -73,6 +73,35 @@ int main() {
         expect("long password truncated to 64", strlen(c.pass) == 64);
     }
 
+    // --- portal countdown shown on the OLED ---
+    // Ceiling, so the last second reads "1" rather than sitting on "0" while
+    // the portal is still usable.
+    expect("countdown starts at the full timeout",
+           portal_seconds_left(0, 0, 180) == 180);
+    expect("countdown ticks down",
+           portal_seconds_left(1000, 0, 180) == 179);
+    expect("countdown rounds up mid-second",
+           portal_seconds_left(500, 0, 180) == 180);
+    expect("countdown last second",
+           portal_seconds_left(179500, 0, 180) == 1);
+    expect("countdown reaches zero at the timeout",
+           portal_seconds_left(180000, 0, 180) == 0);
+    expect("countdown never goes negative",
+           portal_seconds_left(500000, 0, 180) == 0);
+    // A phone attached resets t0, so the portal gets its full window back.
+    // Without the bump, the portal would already be past its deadline here.
+    expect("countdown after a client attaches",
+           portal_seconds_left(180000, 179000, 180) == 179);
+    // millis() wraps every ~49 days; the unsigned subtraction must survive it.
+    // `now` is computed with the same arithmetic as the code, so the elapsed
+    // time is exactly 20 s whether unsigned long is 32- or 64-bit wide.
+    {
+        unsigned long start = 0xFFFFFF00UL;
+        unsigned long now   = start + 20000UL;
+        expect("countdown survives the millis() wrap",
+               portal_seconds_left(now, start, 180) == 160);
+    }
+
     if (g_failures) { printf("\n%d failure(s)\n", g_failures); return 1; }
     printf("\nall wifi_policy tests passed\n");
     return 0;

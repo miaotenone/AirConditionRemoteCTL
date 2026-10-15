@@ -7,6 +7,7 @@
 #include "display.h"
 #include "serial_console.h"
 #include "wifi_policy.h"
+#include <stdio.h>   // snprintf for the on-screen countdown
 
 // How long the BOOT button has to be held before we treat it as "I want to
 // configure this device". Long enough not to fire on a stray bump.
@@ -151,6 +152,20 @@ static bool wait_portal(AppConfig& cfg) {
             delay(1000);
             ESP.restart();
         }
+
+        // Once a second: how long the portal has left. Between refreshes the
+        // screen keeps whatever it has, and display_lines() is not cheap.
+        static unsigned long last_shown = 0;
+        if (millis() - last_shown >= 1000) {
+            last_shown = millis();
+            char countdown[24];
+            snprintf(countdown, sizeof(countdown), "portal %us",
+                     (unsigned)portal_seconds_left(millis(), t0, WIFI_PORTAL_TIMEOUT_S));
+            Serial.printf("[wifi] %s\n", countdown);
+            display_lines("AirCon Gateway", "portal open", countdown,
+                          "192.168.4.1");
+        }
+
         serial_console_poll(cfg);
         if (reset_button_hold_detected()) reboot_into_portal("BOOT held");
         delay(10);
