@@ -23,6 +23,7 @@ src/
   net_mqtt.{h,cpp}          WiFi + MQTT（重连 / 遗嘱 / retained 状态）
   display.{h,cpp}           U8g2 OLED 显示
   config_store.{h,cpp}      NVS 配置读写
+  state_store.{h,cpp}       NVS 里记住的空调状态（重启 / 刷固件不丢）
   web_config.{h,cpp}        WiFiManager 配网 + 配置页
   selftest.cpp              硬件自检固件（`[env:selftest]`，不依赖 WiFi）
   config.h / pins.h         默认参数与引脚
@@ -79,6 +80,16 @@ systemd 单元**——broker 活着不代表发命令的那个服务活着，所
 **DHT11 只负责测量**。闭环决策（要不要调、调多少）在树莓派上做：固件每 30 s
 读一次，把 `{temp,humidity,ok}` 发到 `<prefix>/env`。
 
+**影子状态存在 NVS**。设备没法「读」空调——红外是单向的，所以 `g_state` 只是一份**记忆**：
+它靠被接受的命令更新，并且**存进 NVS**（`src/state_store.*`）。于是：
+
+- 重启 / 刷固件后**不退回出厂初值**（只有 NVS 里什么都没有时才用配置的初值）；
+- 只在**真的改了状态**（应用命令、失联关机）时写一次 —— 30 s 心跳不写，NVS 有写寿命；
+- 开机 2 秒内按 `r` 的「恢复出厂」会连它一起清掉。
+
+> ⚠️ 它仍然不知道**实体遥控器**做过什么。若你用遥控器开着空调，下一条被接受的命令
+> 会按它的影子状态发整帧（含 `power`）—— 那一下可能把空调关掉。这是设计（§说明与限制）。
+
 ## 构建与烧录
 
 1. 安装 [PlatformIO](https://platformio.org/)（VS Code 扩展，或 `pip install platformio`）。
@@ -118,6 +129,10 @@ systemd 单元**——broker 活着不代表发命令的那个服务活着，所
 | `ac/event` | ESP32 → 树莓派（retained）| `{"type":"failsafe_off","ts":1792078200,"prev":{...}}` |
 
 字段取值：`power` 0/1；`mode` 自动0/制冷1/除湿2/送风3/制热4；`temp` 16~30；`fan` 自动0/低1/中2/高3。指令只带需要改的字段，越界值会被夹取到合法范围。
+
+**设备对每一条能识别的 `ac/cmd` 都立刻回一次 `ac/state`**（哪怕字段值没变）—— 服务端那 5 秒的
+「⚠️ 未确认」窗口只等这一条，每 30 s 的例行重发太慢。字段一个都不认识的命令会打日志忽略
+（并同样回一次状态，免得服务端空等）。
 
 `env` / `event` 是 retained 的，broker 会把最后一条重放给新订阅者——**服务端要按
 retained 标志和 `ts` 把"重放"和"刚发生"区分开**。`hb` 反过来必须**不** retained：
@@ -340,4 +355,4 @@ python scripts/serial_cmd.py "show" "scan"
 - 默认引脚：OLED SDA=21/SCL=22，红外模块 RX=16/TX=17（见 `src/pins.h`）。
 - **网络**：只需 **2.4GHz** WiFi。IP 由路由器 DHCP 分配（实测 `192.168.8.105`），设备名 `ac-gateway`；建议在路由器上做 **IP 绑定**，或直接用 mDNS 名 `ac-gateway.local`。
 - **OTA**：`ArduinoOTA` 已启用（`OTA_ENABLED=1`），端口 `3232`，可直接无线升级，不必每次插 USB。
-- **恢复出厂**：上电 2 秒内串口发 `r` → 清 WiFi + 配置并重启（见「联调检查清单」3.4）。
+- **恢复出厂**：上电 2 秒内串口发 `r` → 清 WiFi + 配置 + **NVS 里记住的空调状态**并重启（见「联调检查清单」3.4）。

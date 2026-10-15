@@ -1,4 +1,5 @@
 #include "config_store.h"
+#include "state_store.h"
 #include <Preferences.h>
 #include <ArduinoJson.h>
 
@@ -63,4 +64,5 @@ void config_store_clear() {
     s_prefs.begin("acctl", false);
     if (s_prefs.isKey("cfg")) s_prefs.remove("cfg");
     s_prefs.end();
+    state_store_clear();   // the remembered AC state is part of "forget it all"
 }
