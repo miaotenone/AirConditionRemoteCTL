@@ -42,8 +42,10 @@ static void print_state() {
                   g_state.temp, g_state.fan, fan_str(g_state.fan));
 }
 
-static void i2c_scan() {
-    Serial.println("[i2c] scanning 0x08..0x77 ...");
+static void i2c_scan_pins(uint8_t sda, uint8_t scl, const char* label) {
+    Wire.end();
+    Wire.begin(sda, scl);
+    Serial.printf("[i2c] scanning 0x08..0x77 (%s) ...\n", label);
     int found = 0;
     for (uint8_t a = 0x08; a <= 0x77; ++a) {
         Wire.beginTransmission(a);
@@ -56,6 +58,69 @@ static void i2c_scan() {
     if (!found) {
         Serial.println("[i2c]   nothing found -> check OLED VCC/GND/SDA/SCL");
     }
+    Wire.end();
+}
+
+static void i2c_scan() {
+    i2c_scan_pins(PIN_OLED_SDA, PIN_OLED_SCL, "SDA=GPIO21 SCL=GPIO22");
+    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
+}
+
+//: The same scan with the two signals the other way round. A module wired
+//: backwards is invisible from the outside -- its pull-ups still hold both
+//: lines high, so the cable "looks" fine, but its controller is watching what
+//: it thinks is its data pin for a clock it will never get, so it never ACKs.
+//: Finding the screen here means the answer is to swap two wires.
+static void i2c_scan_swapped() {
+    i2c_scan_pins(PIN_OLED_SCL, PIN_OLED_SDA, "SWAPPED: SDA=GPIO22 SCL=GPIO21");
+    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
+    Serial.println("[i2c] bus back to SDA=GPIO21 SCL=GPIO22");
+}
+
+//: Is the module really on the bus? An I2C scan only ever says "nothing
+//: answered", which is the same answer for a module that is missing, one that
+//: is unpowered, and one plugged into the wrong header. With the ESP32's own
+//: pull-ups switched off, the only thing left that can hold a line high is the
+//: module's own pull-up resistor -- so a line that reads low or flaps has
+//: nothing on the far end of it.
+static void wire_check() {
+    Wire.end();                        // hand the pins back before poking them
+
+    for (int i = 0; i < 2; ++i) {
+        uint8_t     pin = (i == 0) ? PIN_OLED_SDA : PIN_OLED_SCL;
+        const char* n   = (i == 0) ? "SDA" : "SCL";
+
+        pinMode(pin, INPUT_PULLUP);     // expect 1: neither shorted nor held low
+        delay(2);
+        int pulled = digitalRead(pin);
+
+        // Drive it low, let go, time the recovery. Reading a pin without
+        // discharging it first proves nothing: a floating pin keeps its charge
+        // for milliseconds. With the module's pull-up on the wire it is back up
+        // in microseconds; with nothing on the far end it never makes it.
+        pinMode(pin, OUTPUT_OPEN_DRAIN);
+        digitalWrite(pin, LOW);
+        delayMicroseconds(50);
+        pinMode(pin, INPUT);
+        uint32_t t0  = micros();
+        int      rise = -1;
+        while (micros() - t0 < 2000) {
+            if (digitalRead(pin) == HIGH) { rise = (int)(micros() - t0); break; }
+        }
+        if (rise < 0) {
+            Serial.printf("[wire] %s GPIO%d: pull-up=%d, released from low -> never came back up\n",
+                          n, pin, pulled);
+        } else {
+            Serial.printf("[wire] %s GPIO%d: pull-up=%d, released from low -> up in %d us\n",
+                          n, pin, pulled, rise);
+        }
+        pinMode(pin, INPUT_PULLUP);
+    }
+
+    Serial.println("[wire] up in a few us  -> the module's pull-up resistor is on that wire (present + powered)");
+    Serial.println("[wire] never comes up -> nothing on that wire: no module, no 3V3, or wrong hole");
+
+    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
 }
 
 static void send_current(const char* why) {
@@ -72,6 +137,8 @@ static void print_help() {
     Serial.println("--- commands (letter, then Enter; value after a space) ---");
     Serial.println("  h / ?       this help + current state");
     Serial.println("  i           I2C scan (find the OLED)");
+    Serial.println("  w           wire check (is the OLED module actually there?)");
+    Serial.println("  x           I2C scan with SDA/SCL swapped (cable in backwards?)");
     Serial.println("  o           OLED test patterns");
     Serial.println("  d           dump current state");
     Serial.println("  r           send REFERENCE frame (midea1 on/cool/24/auto)");
@@ -104,6 +171,14 @@ static void handle_line(char* line) {
 
         case 'i':
             i2c_scan();
+            break;
+
+        case 'w':
+            wire_check();
+            break;
+
+        case 'x':
+            i2c_scan_swapped();
             break;
 
         case 'o':
