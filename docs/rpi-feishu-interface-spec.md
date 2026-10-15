@@ -1,12 +1,20 @@
 # 树莓派 + 飞书服务 · 接口规格（定稿 v1）
 
-> 本文件描述**另一个仓库**（树莓派侧服务）的设计与接口契约。
-> 它和 ESP32 固件仓库的共同边界只有一件事：**MQTT 契约**。
-> 建议本文件原样复制为该仓库的 `docs/interface-spec.md`，两个仓库各自引用同一份契约。
+> 📌 **本文件是镜像**：原文是服务端仓库 `AirConditionRemoteServer/docs/interface-spec.md`，
+> 逐字节复制到这里（固件是契约的另一半，手上得有）。**改契约请先改服务端、再复制过来**，
+> 不要在本仓库里单独改。镜像时间：**2026-10-15**（v1.2 的 `env` / `hb` / `event` 三个 topic 已在 §4.1）。
+
+> 本文件是**服务端仓库**（`AirConditionRemoteServer`，树莓派侧服务）的设计与接口契约。
+> 它和 ESP32 固件仓库 `AirConditionRemoteCTL` 的共同边界只有一件事：**MQTT 契约**。
+> 契约的权威实现在固件仓库（`src/net_mqtt.cpp`）；本仓库引用同一份契约，两边必须一致。
 
 日期：2026-10-12
 状态：**定稿 v1**（决策记录见 §12）
 上游仓库：`AirConditionRemoteCTL`（ESP32 固件，已完成）
+本仓库：`AirConditionRemoteServer`（树莓派 + 飞书服务；**MQTT 链路已验证**，服务本体未开工）
+当前状态（2026-10-15）：v1 **已上线并在真机使用**；v1.2（预设 / 天气 / DHT11 夜间闭环 / 失联保护）也已上线，
+遗留与缺口见 [`../README.md`](../README.md) 与设计文档 §18.12。**本文以下仍是 v1 的规格原文**，
+v1.1/v1.2 的增补就地标在对应位置。
 
 ---
 
@@ -62,7 +70,7 @@
 
 | 关注点 | 选择 | 理由 |
 |---|---|---|
-| 语言 | Python 3.11+ | 生态成熟、树莓派原生 |
+| 语言 | Python 3.10+ | 生态成熟、树莓派原生（目标树莓派现装 3.10.12，足够）|
 | MQTT | `paho-mqtt`（或 `aiomqtt`） | 与 Mosquitto 配合，支持 LWT/retained |
 | 飞书 | 官方 `lark-oapi` + **长连接**（`lark.ws.Client`） | 无需公网 IP / 内网穿透，树莓派直接收事件 |
 | 配置 | 环境变量 + `.env`（`pydantic-settings`） | 密钥不落库、部署简单 |
@@ -85,8 +93,25 @@
 | `{prefix}/cmd` | 发布 | 1 | 否 | 只含要改字段的 JSON |
 | `{prefix}/state` | 订阅 | 1 | **是** | 完整状态 JSON |
 | `{prefix}/status` | 订阅 | 1 | **是** | 在线/离线 JSON（LWT） |
+| `{prefix}/env` | 订阅 | 1 | **是** | DHT11 读数 `{temp,humidity,ok}` |
+| `{prefix}/hb` | 发布 | 0 | 否 | 服务心跳 `{ts}`（证明"决策者活着"）|
+| `{prefix}/event` | 订阅 | 1 | **是** | 设备事件 `{type,ts,prev}` |
 
 `prefix` 默认 `ac`，由固件配网页设定，两边必须一致。
+
+> ⚠️ **上表的 QoS 是设计意图，线上实际是 QoS0**（2026-10-15 核对）：ESP32 侧用的是 **PubSubClient**，
+> 它的 `publish()` 第三个参数是 `retained`、**没有 QoS 参数**（只能 QoS0），`subscribe()` 同理。
+> **`Retained` 那一列是真的**（固件都传了 `true`）——retained + 固件每 30s 重发 `state`，才是实际兜底的东西。
+> 所以：**不要依赖 QoS1 的投递保证**（掉一条 `ac/state`，服务端到 `CONFIRM_TIMEOUT_S` 就会显示「⚠️ 未确认」）。
+> 要真 QoS1 得换客户端库、或把契约改成写实情——都还没做。设计文档 §18.12.4。
+
+> **为什么还要 `hb`**：Mosquitto 跑在树莓派上但**是独立的 systemd 单元**，
+> 所以「MQTT 连上了」并不等于「发命令的那个服务活着」。`hb` 是设备唯一能
+> 拿到的、关于**决策者**在不在的证据（设计 18.8）。
+>
+> **`env` / `event` 是 retained 的陷阱**：broker 会把 retained 消息重放给
+> 新订阅者。服务必须只看**非 retained** 的新消息（重放的是历史，不是读数），
+> 且 `event` 只认 `ts` 在 10 分钟以内的（设计 18.6）。
 
 ### 4.2 Payload 定义
 
@@ -119,6 +144,37 @@
 - ESP32 上线时发布 `{"online":true}`；
 - 掉线时由 broker 代发遗嘱 `{"online":false}`。
 
+**`{prefix}/env`（ESP32 → 服务）** — retained，DHT11 读数（每 30s 一条）：
+
+```json
+{ "temp": 26, "humidity": 55, "ok": true }
+```
+
+| 字段 | 类型 | 取值 |
+|---|---|---|
+| `temp` | int | 室温 ℃（DHT11 分辨率 1℃）|
+| `humidity` | int | 相对湿度 % |
+| `ok` | bool | 读数是否有效；`false` 时前两项无意义 |
+
+- `ok=false` 只表示"这一次没读出来"，**服务不得把它当数据**（不入历史、不参与闭环）。
+- 服务只采信**非 retained** 的新消息；超过 10 分钟没新读数就不参与决策。
+
+**`{prefix}/hb`（服务 → ESP32）** — 不 retained，QoS0，每 30s 一条：
+
+```json
+{ "ts": 1792078200 }
+```
+
+**`{prefix}/event`（ESP32 → 服务）** — retained，设备事件（带 `ts`）：
+
+```json
+{ "type": "failsafe_off", "ts": 1792078200, "prev": {"power":1,"mode":1,"temp":24,"fan":0} }
+```
+
+- 目前只有 `failsafe_off`：设备连续失联 5 分钟后自行关机（见固件仓库设计）。
+- 服务收到**非 retained 且 `ts` 在 10 分钟内**的事件才动作；恢复策略要求
+  `prev.power == 1`（本来就关机就不必再开）。
+
 > 固件每 30s 心跳重发 `ac/state`。服务可用"最后一条 `ac/state` 的到达时间"判断数据新鲜度，超时（如 >90s）但 `status.online=true` 时提示"状态可能过期"。
 
 ### 4.3 时序（一次点击）
@@ -143,8 +199,10 @@
 
 **v1 范围：私聊单用户** —— 只服务 owner 自己，机器人**不拉群**、不做多人并发。因此"卡片归属"只有一条记录，实现大幅简化。
 
-- 用户对机器人发送任意消息（如 `/ac`、`遥控器`）→ 回复一张卡片。
-- 之后所有点击都**原地更新**这张卡片。
+- 用户对机器人发送召唤词 `设置卡片` → 发一张新卡片到消息流最新位置并撤回旧卡（无文字回执）。
+- 发其它消息（如 `开机`）→ 解析成动作 + 文字回执；会话里没有卡片时**补一张**，之后只**原地更新**这张卡片。
+- 之后所有点击都**原地更新**当前这张卡片。
+- 旧召唤词 `/ac`、`/start`、`ac`、`空调` 已退场：现在按 `unclear` 处理（回「没听懂这句。…」，照旧补卡）。
 - 服务在 SQLite 记录 `owner_chat_id → message_id`（单条），重启后仍能更新旧卡片。
 - 非 owner 的会话/事件一律忽略（`OWNER_OPEN_ID` 之外不响应）。
 
@@ -266,12 +324,94 @@
 > `select_static` 的 `options` 实际应列出 **16~30 全部 15 项**，这里只留两项示意。
 > 飞书卡片 schema 版本请以官方文档为准，实现时**锁定一个版本**并在 `cards.py` 里集中构造。
 
+**实现落点（2026-10-13）**：已锁定 **Card JSON 2.0**，对照官方
+[卡片 2.0 结构](https://open.feishu.cn/document/feishu-cards/card-json-v2-structure) 与
+[按钮组件](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button) 实现，
+全部集中在 `app/cards.py`。
+
+两处与上面示意不同、以官方文档为准的实现决定：
+
+1. **按钮回调**用 2.0 的写法：`"behaviors": [{"type": "callback", "value": {"a": ..., "v": ...}}]`
+   （2.0 不再支持 `"tag": "action"` 交互模块；按钮直接放进 `elements`）。
+2. **下拉选项的 `value` 是字符串**，不是对象 —— 飞书回来的是 `action.option`。
+   所以归一化放在 `app/actions.py`：`action.option == "24"` → `("temp", 24)`；
+   `action.value` 优先。`app/cards.py` 只管生成，`feishu_client` 只管收，
+   `actions.py` 是两者中间的纯函数。
+
+卡片的**视觉排布**（`column_set` 的 `width`/`weight`、按钮换行）需要首次联调时对着真机微调。
+
 ### 5.5 回调处理约定
 
 - 飞书要求回调 **3 秒内**响应 → 服务先返回"已接受 + 乐观卡片"，**不要**等 MQTT。
 - MQTT 往返 + 红外 ≈ 数十~数百毫秒，但网络抖动时可能更久，因此异步是必须的。
 - 所有点击**串行化**（单用户单队列），避免乱序导致卡片抖动。
 - 连续 `temp_step` 快速点击：**合并**为最终值再发一条 `ac/cmd`（去抖窗口建议 300~500ms）。
+
+### 5.6 文本控制（v1.1）
+
+私聊里直接发中文短句，与点卡片**同源**：解析出来的仍是 `(action, value)`，进同一个动作队列，
+因此去抖、乐观更新、确认超时全部继承 §5.3 / §5.5，`state.py` / `cards.py` / `mqtt_client.py` 未做任何改动。
+
+**分派顺序**（`app/intent.py`，顺序即优先级）：
+
+| # | 类别 | 触发 | 结果 |
+|---|---|---|---|
+| 1 | 问句 | 含 `状态`/`多少度`/`几度`/`怎么样`，或**以 `吗`/`呢` 结尾** | `query` → 回一条当前状态，不动空调 |
+| 2 | 帮助 | 含 `帮助`/`怎么用`/`能做什么`/`指令` | `help` → 回语法清单 |
+| 3 | 动作 | 命中下表任一 | `actions` → 入队执行 |
+| 4 | 纯否定 | 只有 `不要制冷` 这类 | 回「好，模式没动」，不发 `ac/cmd` |
+| 5 | 感受词 | `太热`/`有点冷`/`有点闷` 等 | `suggest` → 只给建议，**永不执行**（设计 D12）|
+| 6 | 兜底 | 其它 | `unclear` → 回「没听懂这句」+ 语法清单 |
+
+> 问句必须排在动作前面：`「开着吗」` 里有个 `开`，若先走动作就会误开机。
+
+**词表**（只覆盖空调真实具备的能力）：
+
+| 字段 | 说法 |
+|---|---|
+| `power` | 开机 / 开空调 / 打开空调 / 开一下 / 启动 · 关机 / 关掉 / 关闭 / 停了 / 不用了 |
+| `mode` | 制冷 / 冷风 =1 · 除湿 / 抽湿 =2 · 送风 / 吹风 =3 · 制热 / 暖风 / 热风 =4 · 自动 =0 |
+| `temp` | `调到24度` / `设成26℃` / `温度24` / `24度`；`开到26` = 开机 + 26℃ |
+| `temp_step` | `调低两度` / `凉快一点` / `凉一点` = 降温 · `升三度` / `高一点` = 升温（支持中文数字）|
+| `fan` | `风速最大` / `大风` / `强风` / `风速3` =3 · `中风` / `2档` / `风速2` =2 · `低风` / `弱风` / `风速1` =1 · `自动风` =0 |
+
+数字可写全角（`２４`）或中文（`两`/`三`）；模式名也认空调面板上的英文（`COOL` / `HEAT` / `DRY` / `FAN` / `AUTO`）。
+
+解析规则：最长匹配优先（`自动风` 是风速而非模式、`冷风` 是模式而非风速）；命中片段被消费，
+`打开空调` 不会被拆成 `打开` + `空调`；同一字段多次出现**以最后一次为准**（`调到24，算了26` → 26）；
+裸数字不构成温度（`2` → 没听懂），除非句子里已出现过温度语境；`档`/`档位`/`风` 绑定风速，
+**优先于温度动词**（`调到2档` 是风速 2，不是 2℃）；相对变化**必须带量词**（`低两度` 可以，
+`身高180` 不行）。
+
+**短词上锁**（防误触发的核心规则）：`开 / 关 / 停 / 打开 / 关闭 / 停了` 在普通话里到处都是，
+所以它们只在**整句是对空调说的**时才算命令 —— 前面只能是称呼（`帮我`/`请`/`麻烦`/`空调`/`把空调`…），
+后面只能是 `空调` 或语气词（`了`/`吧`/`着`…）；或者后面**紧跟一个真动作**（`开制冷24度`、`开2档`）。
+因此 `「没关系」`、`「开心」`、`「开关」`、`「关灯」`、`「打开心扉」`、`「雨停了」` 一律**不动作**，
+回「没听懂」。**代价是刻意的**：`「一直开着」`、`「把窗户关了」` 也不动作 —— 防误触发优先于覆盖率，
+一次误触发的代价是物理世界里的空调真的动了。
+
+**回执**（`app/replies.py`，走 `im.v1.message.reply`，回在原消息线程里）：
+
+```
+✅ 已开机 · 制冷 · 24℃ · 自动风                     ← 动作成功
+✅ 已开机 · 制冷 · 30℃ · 自动风（温度范围 16~30）      ← 被夹取
+✅ 已关机 · 制冷 · 24℃ · 自动风（当前关机，开机后生效）  ← 关机状态下改设定
+✅ 已开机 · 制冷 · 24℃ · 自动风（设备离线，可能不生效）  ← 设备离线
+好，模式没动                                        ← 整句只有否定
+现在 开机 · 制冷 · 24℃ · 自动风 · 🟢 在线（更新于 12:03:41）  ← 问句
+```
+
+多条原因用 `；` 连接，顺序固定为 **夹取 → 否定 → 关机 → 离线**。
+
+**去重**：以 `message_id` 为准（`store.mark_seen`）。飞书可能重投同一条事件，而 `temp_step`
+这类相对命令**不幂等**，重放会把温度推两次。注意去重只管重投 —— 用户自己发三遍 `调低两度`
+就是三次降温，不是 bug。
+
+**开关**：`TEXT_CONTROL_ENABLED`（默认 `true`）。置 `false` 回到旧行为 —— 只有 `设置卡片`
+召唤词有反应，其余文本只记日志。
+
+**文本路径不走卡片的置灰**：卡片在关机时把模式/风速按钮置灰，但文本没有"可点元素"，
+所以 `关机状态下发「制冷」` 会被接受并入队，靠回执里的「当前关机，开机后生效」说明后果。
 
 ---
 
@@ -309,18 +449,29 @@ class Presence:
 | `MQTT_PREFIX` | topic 前缀，须与固件一致 | `ac` |
 | `OWNER_OPEN_ID` | 允许控制的唯一用户 open_id（私聊单用户） | （必填） |
 | `LOG_LEVEL` | 日志级别 | `INFO` |
+| `FEISHU_LOG_LEVEL` | 仅长连接 socket 的日志级别；`DEBUG` 可看到原始 WS 收发包 | `INFO` |
+| `DEBOUNCE_MS` | 去抖窗口：此窗口内的连续操作合并成一条 `ac/cmd` | `400` |
+| `CONFIRM_TIMEOUT_S` | 超过这么久没收到 `ac/state` → 卡片显示「⚠️ 未确认」（**命令无需改变时会误报**，见 §10 注） | `5` |
+| `STALE_AFTER_S` | 在线但静默超过这么久 → 卡片加「状态可能过期」软提示 | `90` |
+| `TEXT_CONTROL_ENABLED` | 是否把普通中文短句当命令解析（§5.6）；`false` 则只认 `设置卡片` | `true` |
+| `DB_PATH` | SQLite 路径（owner ↔ 卡片 message_id、已处理消息去重） | `ac-bot.sqlite3` |
 
 ---
 
 ## 8. 部署
 
+本仓库的 [`deploy/mosquitto-ac.conf`](../deploy/mosquitto-ac.conf) 是**已在树莓派上验证通过**的版本：
+
 ```ini
 # /etc/mosquitto/conf.d/ac.conf
 listener 1883 0.0.0.0
 allow_anonymous true          # 内网可接受；要求更高则改用密码/ACL
-persistence true
-persistence_location /var/lib/mosquitto/
 ```
+
+> ⚠️ **不要把 `persistence` / `persistence_location` 写进 drop-in**：Ubuntu 自带的
+> `/etc/mosquitto/mosquitto.conf` 已经设置了两者，mosquitto 2.0 把重复项当**致命错误**，
+> 会直接启动失败（`Error: Duplicate persistence_location value in configuration.`）。
+> 这个坑已经踩过一次，详见 `deploy/mosquitto-ac.conf` 顶部的注释。
 
 ```ini
 # /etc/systemd/system/ac-bot.service
@@ -345,23 +496,35 @@ WantedBy=multi-user.target
 
 ## 9. 建议的仓库结构
 
+本仓库（`AirConditionRemoteServer`）的根目录结构：
+
 ```
-ac-bot/
+AirConditionRemoteServer/
   app/
-    main.py            # 装配：配置 → MQTT → 飞书 → 事件循环
-    config.py          # pydantic-settings
-    mqtt_client.py     # 连接/重连/订阅/发布 + 回调分发
-    state.py           # AcState / Presence / 乐观更新
-    cards.py           # 卡片 JSON 构造（纯函数，可单测）
-    feishu_client.py   # 长连接、发卡/更新卡、回调路由
-    store.py           # SQLite: owner_chat_id ↔ message_id（单条）
+    main.py            # ✅ 装配 + 事件循环（乐观更新 / 去抖 / 超时）
+    config.py          # ✅ pydantic-settings
+    mqtt_client.py     # ✅ 连接/重连/订阅/发布 + 回调分发
+    state.py           # ✅ AcState / Presence / 夹取 / 合并 / 指纹
+    actions.py         # ✅ 回调归一化：按钮 action.value 与下拉 action.option → (a, v)
+    cards.py           # ✅ 卡片 JSON 构造（纯函数）
+    feishu_client.py   # ✅ 长连接、发卡/更新卡、回调路由
+    store.py           # ✅ SQLite: owner ↔ message_id
   tests/
-    test_cards.py      # 卡片构造纯函数
-    test_state.py      # 乐观更新/合并/夹取
+    test_state.py      # ✅ 夹取 / 合并 / 指纹 / presence
+    test_cards.py      # ✅ 卡片结构与按钮回调值
+    test_actions.py    # ✅ 回调归一化与拒绝
+    test_config.py     # ✅ 环境变量契约
+    test_store.py      # ✅ 卡片映射
   deploy/
-    mosquitto-ac.conf
-    ac-bot.service
+    mosquitto-ac.conf  # ✅ 已在树莓派部署并验证
+    ac-bot.service     # ✅ 注意 User=dirj（树莓派上没有 pi 用户）
+  docs/
+    interface-spec.md  # 本文件
+    mqtt-bringup.md    # MQTT 链路验证记录 + 环境事实
+    feishu-bringup.md  # 飞书链路验证记录（长连接 / 卡片回调 / 环境标识）
+    feishu-setup.md    # 飞书自建应用 —— 建应用清单
   .env.example
+  .gitignore
   pyproject.toml
   README.md
 ```
@@ -382,6 +545,11 @@ ac-bot/
 
 日志至少包含：每次 `ac/cmd`（payload）、每次 `ac/state` 变化、每次卡片更新、每次重连。
 
+> ⚠️ **「5s 无变化 ⇒ ⚠️ 未确认」会误报（2026-10-15 实测）**：当这条命令**不需要改变任何状态**时
+> （空调已经在那个状态），`merge_actions()` 合并成空 ⇒ 服务端**根本不发 `ac/cmd`**，也就不会有 `ac/state` 回来；
+> 而 `pending` 是在**排队时**就置位的，于是下一个 tick 立刻报「未确认」。所以这条提示只能当**弱提示**，
+> **不能当"设备没执行"的判据**。修法：固件对每条命令都回一次状态，或服务端区分「无需改变」。设计文档 §18.12.1。
+
 ---
 
 ## 11. 验收标准
@@ -393,6 +561,9 @@ ac-bot/
 5. ESP32 断电期间点击按钮 → 卡片提示"未确认/离线"，不崩、不刷屏。
 6. 发送非法字段/越界温度 → 服务侧被拒或夹取，绝不发未知字段给固件。
 7. `cards.py` / `state.py` 单元测试全绿，无需飞书与 MQTT 环境。
+8. 发「开机制冷24度」→ 只有**一行** `ac/cmd`（含 3 个字段），回执列出新状态。
+9. 发「太热了」→ **不发** `ac/cmd`，只回一条带方向的建议（设计 D12）。
+10. 同一条 `message_id` 重投 → 只执行一次；连发三条不同消息 → 执行三次。
 
 ---
 
@@ -405,6 +576,10 @@ ac-bot/
 3. **飞书接入**：**自建应用 + 机器人能力 + 长连接**（不暴露公网，无需内网穿透）。
 4. **定时 / 场景**：v1 **不做**。
 5. **多空调**：v1 **不做**，topic 前缀固定 `ac`。
+6. **文本控制**（v1.1）：私聊里发中文短句与点卡片**等价**（解析成同样的 `(action, value)`，进同一个队列），
+   规则解析、**不接 LLM**；形容词句（`太热了`）只给建议、**永不执行**；去重以 `message_id` 为准；
+   可用 `TEXT_CONTROL_ENABLED=false` 整体关掉。完整设计与 14 条决策见
+   [`superpowers/specs/2026-10-13-feishu-text-control-design.md`](superpowers/specs/2026-10-13-feishu-text-control-design.md) §10。
 
 ### 待确认（不阻塞 v1 开工）
 
