@@ -38,6 +38,7 @@ static const uint8_t PAGE_COUNT = 3;
 static PageFn s_pages[PAGE_COUNT] = { page_aircon, page_room, page_link };
 
 static DisplayInfo s_info;
+static bool     s_ok          = false;  // an OLED answered the probe
 static uint8_t  s_page        = 0;
 static uint8_t  s_from        = 0;
 static uint8_t  s_anim        = 0;   // frames left in the current slide
@@ -46,6 +47,10 @@ static bool     s_manual      = true;  // display_lines() owns the screen
 static uint32_t s_fp          = 0;
 static uint32_t s_lastSwitch  = 0;
 static uint32_t s_lastFrame   = 0;
+
+//: Bound on a single I2C transaction. The default is unbounded enough that a
+//: half-connected module turns every frame into seconds of stalling.
+static const uint16_t OLED_I2C_TIMEOUT_MS = 50;
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -214,14 +219,68 @@ static uint32_t fingerprint(const DisplayInfo& i) {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-void display_begin() {
-    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
+// I2C bring-up
+// ---------------------------------------------------------------------------
+//: A *soft* reset -- esptool's RTS pulse, the reset button, an OTA reboot --
+//: can land in the middle of an OLED transfer and leave the slave pulling a
+//: line low; every later transaction then times out and the board looks dead
+//: after a reflash. Clock the bus out by hand *before* Wire owns the pins:
+//: nine SCL pulses walk a slave through a stuck bit, then a STOP returns the
+//: bus to idle. Costs ~100 us on a healthy bus.
+static void i2c_bus_recover() {
+    pinMode(PIN_OLED_SDA, INPUT_PULLUP);
+    pinMode(PIN_OLED_SCL, INPUT_PULLUP);
+    delayMicroseconds(20);
+    if (digitalRead(PIN_OLED_SDA) == HIGH && digitalRead(PIN_OLED_SCL) == HIGH) {
+        return;                                        // idle, leave it be
+    }
 
-    // Probe the two common addresses.
+    pinMode(PIN_OLED_SCL, OUTPUT_OPEN_DRAIN);
+    for (int i = 0; i < 9; ++i) {
+        digitalWrite(PIN_OLED_SCL, LOW);
+        delayMicroseconds(5);
+        digitalWrite(PIN_OLED_SCL, HIGH);
+        delayMicroseconds(5);
+    }
+
+    // STOP: SDA rises while SCL is high.
+    pinMode(PIN_OLED_SDA, OUTPUT_OPEN_DRAIN);
+    digitalWrite(PIN_OLED_SDA, LOW);
+    delayMicroseconds(5);
+    digitalWrite(PIN_OLED_SCL, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(PIN_OLED_SDA, HIGH);
+    delayMicroseconds(5);
+
+    pinMode(PIN_OLED_SDA, INPUT_PULLUP);
+    pinMode(PIN_OLED_SCL, INPUT_PULLUP);
+    Serial.println("[oled] i2c bus was stuck -> clocked it out");
+}
+
+//: Is anything answering at the usual addresses? The display is optional: a
+//: loose cable, an unpowered module or no module at all must not stop the
+//: gateway, so a silent bus disables the screen rather than letting u8g2 burn
+//: seconds of timeouts on every frame.
+static bool oled_probe() {
     const uint8_t candidates[2] = {0x3C, 0x3D};
     for (uint8_t a : candidates) {
         Wire.beginTransmission(a);
-        if (Wire.endTransmission() == 0) { s_addr = a; break; }
+        if (Wire.endTransmission() == 0) {
+            s_addr = a;
+            return true;
+        }
+    }
+    return false;
+}
+
+void display_begin() {
+    i2c_bus_recover();
+    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
+    Wire.setTimeOut(OLED_I2C_TIMEOUT_MS);
+
+    if (!oled_probe()) {
+        Serial.println("[oled] no display answering -> running headless");
+        return;
     }
     Serial.printf("[oled] using 0x%02X\n", s_addr);
 
@@ -232,10 +291,13 @@ void display_begin() {
     u8g2.drawStr(0, 12, "AC Gateway booting");
     u8g2.sendBuffer();
 
+    s_ok         = true;
     s_lastSwitch = millis();
 }
 
 void display_lines(const char* l1, const char* l2, const char* l3, const char* l4) {
+    if (!s_ok) return;
+
     // Manual mode: boot chatter and the self-test own the screen until the
     // pager is handed data again.
     s_manual = true;
@@ -268,7 +330,7 @@ void display_show_info(const DisplayInfo& info) {
 }
 
 void display_tick() {
-    if (s_manual) return;
+    if (!s_ok || s_manual) return;
 
     uint32_t now = millis();
 
@@ -308,6 +370,7 @@ uint8_t display_address() {
 }
 
 void display_test_patterns() {
+    if (!s_ok) return;
     s_manual = true;
 
     // 1) all pixels on

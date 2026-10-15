@@ -188,6 +188,8 @@ python -m platformio device monitor              # 打开串口菜单
 | 4 行：`AirCon Gateway` / `AC ON  COOL  24C` / `Fan AUTO   Net OK` / `192.168.x.x` | ✅ 正常 |
 | 首启（未配网）时显示 `connecting WiFi...` + `AP: AC-Gateway-Setup` / `pw: acgateway` | ✅ 正常（配网门户提示） |
 | 第四行 `no IP` | 还没连上 WiFi |
+| 串口 `[oled] no display answering -> running headless` | 总线上**没有任何屏应答**（没接 / 没供电 / 线松）。网关照常跑，只是不显示；接好线再上电即可 |
+| 复位（刷机、按 reset）后像死机、串口停在 `[oled]` 附近 | 复位打断了 OLED 传输、从机压住总线。固件现在**开机先做一次总线恢复**（九拍时钟 + STOP）再接管 I2C，正常不会再出现 |
 | 全黑，串口有 `[oled] using 0x3C` | 多为控制器不符：把 `src/config.h` 的 `OLED_SH1106` 改 `0` 重烧 |
 | 串口 `[oled] using 0x3D` 或探测不到 | 检查 SDA/SCL 是否接反、是否 3.3V 供电 |
 | 花屏 / 上半屏错位 | 典型 SH1106 参数不符，同上切换 `OLED_SH1106` |
