@@ -45,7 +45,39 @@ tests/native/               原生单元测试
 - ESP32-WROOM-32E 开发板
 - 高配版红外模块（TTL 串口 115200 8N1）
 - 1.3" 4 脚 I2C OLED
+- DHT11 室温/湿度传感器（GPIO4，数据线要 4.7k~10k 上拉到 3V3）
 - 接线见 [`docs/wiring.md`](docs/wiring.md)
+
+## 运行时行为
+
+**OLED 三页轮播**。屏幕分三页，每 5 秒横向滑动切换（约 240 ms 过渡），只在
+内容真的变了才重绘，不再是每秒无脑刷屏：
+
+| 页 | 标题 | 内容 |
+|---|---|---|
+| 1 | `AIRCON` | 设定温度（大字号）、电源徽标、模式、风速 |
+| 2 | `ROOM` | DHT11 室温（大字号）、湿度、与设定值的差 `d±n` |
+| 3 | `LINK` | WiFi/MQTT 状态、IP、**服务心跳**（`SVC HB OK/LOST`）、运行时长 |
+
+传感器读失败时 ROOM 页直接写 `no signal`，**不会**拿上一次的旧值冒充。
+
+**失联自动关机（fail-safe）**。设备把「WiFi+MQTT 通」和「收到服务心跳
+`<prefix>/hb`」都算作「还联系得上」，任何一半断了 **5 分钟**就发一帧红外关机，
+并把 `g_state.power` 置 0。这是因为 Mosquitto 虽然跑在树莓派上，**却是独立的
+systemd 单元**——broker 活着不代表发命令的那个服务活着，所以光看 MQTT 连接
+是不够的。
+
+- 启动守卫：**先成功连上一次**才武装；否则一个没网的板子上电就会去"保护"一台
+  它从没控制过的空调。
+- 恢复：重新连上服务后补发 `<prefix>/event`，服务端据此把空调还原成失联前的
+  样子（本来就关着就不动）。
+- ⚠️ 运维提示：**树莓派停机（重启/更新/断电）超过 5 分钟，空调就会被关掉**。
+  这是刻意设计的行为，不是 bug。
+- `ac/event` 带 `ts`，所以固件用 SNTP 同步时钟；没同步成功就**不发**事件
+  （宁可不发，也不发个服务端无法判断新旧的假事件）。
+
+**DHT11 只负责测量**。闭环决策（要不要调、调多少）在树莓派上做：固件每 30 s
+读一次，把 `{temp,humidity,ok}` 发到 `<prefix>/env`。
 
 ## 构建与烧录
 
@@ -81,8 +113,15 @@ tests/native/               原生单元测试
 | `ac/cmd` | 树莓派 → ESP32 | `{"power":1}` / `{"temp":24}` / `{"mode":1,"fan":2}` |
 | `ac/state` | ESP32 → 树莓派（retained）| `{"online":true,"power":1,"mode":1,"temp":24,"fan":0,"brand":16}` |
 | `ac/status` | ESP32 遗嘱（LWT）| `{"online":false}` |
+| `ac/env` | ESP32 → 树莓派（retained）| `{"temp":26,"humidity":55,"ok":true}` |
+| `ac/hb` | 树莓派 → ESP32（QoS0，不 retained）| `{"ts":1792078200}` |
+| `ac/event` | ESP32 → 树莓派（retained）| `{"type":"failsafe_off","ts":1792078200,"prev":{...}}` |
 
 字段取值：`power` 0/1；`mode` 自动0/制冷1/除湿2/送风3/制热4；`temp` 16~30；`fan` 自动0/低1/中2/高3。指令只带需要改的字段，越界值会被夹取到合法范围。
+
+`env` / `event` 是 retained 的，broker 会把最后一条重放给新订阅者——**服务端要按
+retained 标志和 `ts` 把"重放"和"刚发生"区分开**。`hb` 反过来必须**不** retained：
+一个活得比进程还久的心跳是假的。
 
 > 这是两个仓库的**唯一接口**。树莓派侧服务的完整规格（飞书卡片、按钮动作、时序、部署、验收）见 [`docs/rpi-feishu-interface-spec.md`](docs/rpi-feishu-interface-spec.md)。
 
@@ -115,14 +154,19 @@ tests/native/               原生单元测试
 ### 硬件自检固件（不依赖 WiFi，推荐先跑）
 
 ```powershell
-python -m platformio run -e selftest -t upload --upload-port COM16   # 烧自检固件
-python -m platformio device monitor -p COM16                          # 打开串口菜单
+python -m platformio run -e selftest -t upload   # 烧自检固件（端口自动探测）
+python -m platformio device monitor              # 打开串口菜单
 ```
+
+> **端口不写死**：板子的 COM 号**重新插拔就会变**（`COM16` 就是这样变成了 `COM11`）。
+> PlatformIO 会自动探测；下面这些脚本也都自动探测（`scripts/_port.py`），
+> 多个 USB 串口同时插着时会报错并让你显式指定，例如 `--upload-port COM11` /
+> `-p COM11`，或设环境变量 `AC_PORT=COM11`。
 
 串口菜单：`h` 帮助、`i` I2C 扫描、`o` OLED 测试图案、`r` 发参考帧、`p` 开关、
 `t 24` 温度、`m 1` 模式、`f 0` 风速、`b 10` 品牌、`l/s` 学习/回放、`d` 状态。
 
-也可以脚本一键抓取（自动复位 + 跑命令 + 打印结果）：`python scripts/hw_selftest.py COM16`
+也可以脚本一键抓取（自动复位 + 跑命令 + 打印结果）：`python scripts/hw_selftest.py`
 
 > 自检固件是**独立环境** `[env:selftest]`，不影响主固件；恢复主固件用
 > `python -m platformio run -e esp32dev -t upload`（板子上跑的是哪个环境由最后一次烧录决定）。
@@ -187,17 +231,18 @@ python -m platformio device monitor -p COM16                          # 打开�
 不想开手机热点配网时，可以直接从串口写配置：
 
 ```powershell
+# 端口自动探测（多个 USB 串口时显式给，如 provision.py COM11）
 # 从 Windows 已保存的 WiFi 档案取 SSID+密码（不会打印明文），再写 MQTT 地址
-python scripts/provision.py COM16 --windows-profile HUAWEI-B311-98C3 --host 192.168.8.103
+python scripts/provision.py --windows-profile HUAWEI-B311-98C3 --host 192.168.8.103
 
 # 也可以直接给参数
-python scripts/provision.py COM16 --ssid MyWiFi --pass 12345678 --host 192.168.8.103 --mqtt-port 1883
+python scripts/provision.py --ssid MyWiFi --pass 12345678 --host 192.168.8.103 --mqtt-port 1883
 ```
 
 也可以手动敲（脚本会先复位板子；`--no-reset` 可跳过）：
 
 ```powershell
-python scripts/serial_cmd.py COM16 "show" "scan"
+python scripts/serial_cmd.py "show" "scan"
 ```
 
 | 命令 | 作用 |
@@ -242,7 +287,7 @@ python scripts/serial_cmd.py COM16 "show" "scan"
 | 现象 | 可能原因 |
 |---|---|
 | 串口刷重启 | 供电不足（红外模块加屏电流较大，用独立 5V/3V3）或接线短路 |
-| 烧录报 `could not open COM16 ... 拒绝访问` | 串口被占用：关掉 Arduino IDE 的串口监视器 / PlatformIO Serial Monitor / PuTTY，或杀掉 `serial-monitor` 进程 |
+| 烧录报 `could not open COMx ... 拒绝访问` | 串口被占用：关掉 Arduino IDE 的串口监视器 / PlatformIO Serial Monitor / PuTTY，或杀掉 `serial-monitor` 进程 |
 | 首启屏幕全黑（但串口正常） | 早期固件把 OLED 初始化排在阻塞的配网之后；现已改为**先初始化屏幕**（≥ `56b4d20`）|
 | 串口反复 `4WAY_HANDSHAKE_TIMEOUT`、热点迟迟不出现 | 板内残留连不上的 WiFi 凭据；**上电 2 秒内发 `r`** 恢复出厂（见 3.4）|
 | OLED 显示 `Net MQTT?` | WiFi 通了但没有 broker（正常，等树莓派就绪）|
