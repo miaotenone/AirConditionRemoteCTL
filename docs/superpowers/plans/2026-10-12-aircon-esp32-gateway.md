@@ -132,6 +132,12 @@
 - [ ] Step 2: 订阅与回调解析（ArduinoJson）
 - [ ] Step 3: `pio run` 通过并提交
 
+> 补记（2026-10-22）：Step 1 当时只做了 **MQTT 侧**重连（每 5 s 重拨）。WiFi 侧没有任何
+> 运行时恢复 —— `net_loop()` 在 `WiFi.status() != WL_CONNECTED` 时直接返回，指望核心的隐式
+> 自动重连，而它并不总能回来：broker 日志实测网关静默 4h15m / 7h40m，期间零 TCP 尝试。
+> 现已补上 `link_guard` 看门狗（静默 15 s 重拨 WiFi、10 min 未愈 `ESP.restart()`），见设计
+> 文档「掉线自愈（网络看门狗）」。
+
 ### Task 7: `main.cpp` 编排 + 编译验证
 
 **Files:** Create `src/main.cpp`

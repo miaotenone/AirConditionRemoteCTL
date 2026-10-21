@@ -26,6 +26,7 @@ src/
   state_store.{h,cpp}       NVS 里记住的空调状态（重启 / 刷固件不丢）
   web_config.{h,cpp}        WiFiManager 配网 + 配置页
   wifi_policy.{h,cpp}       配网策略（该记住哪套凭据 / 门户倒计时，纯函数，可原生单测）
+  link_guard.{h,cpp}        网络看门狗策略（何时重拨 WiFi / 何时重启，纯函数，可原生单测）
   selftest.cpp              硬件自检固件（`[env:selftest]`，不依赖 WiFi）
   config.h / pins.h         默认参数与引脚
 docs/
@@ -152,6 +153,9 @@ retained 标志和 `ts` 把"重放"和"刚发生"区分开**。`hb` 反过来必
 ```powershell
 ./scripts/run_native_tests.ps1
 ```
+
+四个纯逻辑套件：`ac_encoder`（协议帧）、`ac_state`（状态夹取）、`wifi_policy`（配网策略）、
+`link_guard`（网络看门狗：何时重拨 WiFi、何时放弃重拨改重启）。
 
 ## 联调检查清单（接真机）
 
@@ -370,6 +374,8 @@ python scripts/serial_cmd.py "show" "scan"
 | `rc=4` / `rc=5` | 用户名密码错（`rc=5` 未授权） |
 | 状态与空调不一致 | 红外没打到（对准）、品牌码不对、或空调被遥控器改过（本固件不知道 → 发一次完整状态即可对齐） |
 | 空调收到但方向/模式相反 | 该品牌码表变体问题，换美的 `0x11`/`0x12` 试 |
+| 卡片长时间 `🔴 离线`、发 `ac/cmd` 没反应 | 路由器踢了客户端。固件现在会自愈：串口能看到 `[net] link lost (wifi=N mqtt=N)` → `[net] link down 15s -> re-dialling WiFi` → `[net] link back after Ns`；10 min 仍未恢复会自动 `ESP.restart()`。有这几行就能判定当时断的是 WiFi 还是 broker |
+| 空调自己关机了（房间变冷） | 5 分钟失联保护（`LINK_LOST_OFF_MS`）真发了一帧「关机」—— 这是设计行为，不是空调故障。链路恢复后**不会**自动开回来，重新下发一次指令即可；若频繁发生，先看上面那条的串口日志 |
 
 ## 说明与限制
 

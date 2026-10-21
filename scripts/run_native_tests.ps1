@@ -17,4 +17,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "== wifi_policy =="
 g++ -std=c++17 -I src tests/native/wifi_policy_test.cpp src/wifi_policy.cpp -o build/wifi_policy_test.exe
 & build/wifi_policy_test.exe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "== link_guard =="
+g++ -std=c++17 -I src tests/native/link_guard_test.cpp src/link_guard.cpp -o build/link_guard_test.exe
+& build/link_guard_test.exe
 exit $LASTEXITCODE
