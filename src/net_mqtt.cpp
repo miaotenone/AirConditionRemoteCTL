@@ -268,8 +268,12 @@ bool net_publish_event(const AppConfig& cfg, const char* type, const AcState& pr
 
     char buf[192];
     size_t n = serializeJson(doc, buf, sizeof(buf));
+    // NOT retained (design 9.1): an event means "this just happened". A retained
+    // copy outlives the moment and is replayed to every later subscriber as if
+    // it were fresh -- and the service drops retained replays anyway, so keeping
+    // one buys nothing and only plants a stale "fail-safe tripped" landmine.
     bool sent = s_mqtt.publish(s_topicEvent.c_str(),
-                               reinterpret_cast<const uint8_t*>(buf), n, true);
+                               reinterpret_cast<const uint8_t*>(buf), n, false);
     Serial.printf("[mqtt] event %s %s\n", type, sent ? "published" : "FAILED");
     return sent;
 }

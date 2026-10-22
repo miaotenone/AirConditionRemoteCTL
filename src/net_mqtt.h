@@ -16,7 +16,7 @@ void net_publish_state(const AppConfig& cfg, const AcState& state, bool online);
 //
 //   <prefix>/hb     server -> device, QoS0, NOT retained   (service liveness)
 //   <prefix>/env    device -> server, QoS1, retained       (DHT11 reading)
-//   <prefix>/event  device -> server, QoS1, retained       (fail-safe trip)
+//   <prefix>/event  device -> server, QoS1, NOT retained   (fail-safe trip)
 //
 // `hb` is the only proof the device has that the process making the decisions
 // is still running: Mosquitto lives on the same Pi but as its own systemd unit,
@@ -27,7 +27,7 @@ bool net_service_alive();
 // must not turn that into data.
 void net_publish_env(const AppConfig& cfg, int temp_c, int humidity, bool ok);
 
-// Publish a device event, retained and stamped with the wall clock. Returns
+// Publish a device event, not retained and stamped with the wall clock. Returns
 // false when it could not be sent -- including when the clock has not synced
 // yet, because the service drops events without a usable `ts`.
 bool net_publish_event(const AppConfig& cfg, const char* type, const AcState& prev);

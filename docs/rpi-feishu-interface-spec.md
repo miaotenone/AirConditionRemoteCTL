@@ -171,14 +171,14 @@ v1.1/v1.2 的增补就地标在对应位置。
 { "ts": 1792078200 }
 ```
 
-**`{prefix}/event`（ESP32 → 服务）** — retained，设备事件（带 `ts`）：
+**`{prefix}/event`（ESP32 → 服务）** — **不** retained，设备事件（带 `ts`）：
 
 ```json
 { "type": "failsafe_off", "ts": 1792078200, "prev": {"power":1,"mode":1,"temp":24,"fan":0} }
 ```
 
 - 目前只有 `failsafe_off`：设备连续失联 5 分钟后自行关机（见固件仓库设计）。
-- 服务收到**非 retained 且 `ts` 在 10 分钟内**的事件才动作；恢复策略要求
+- 服务收到 `ts` 在 10 分钟内的事件才动作（并仍然忽略 retained 重放，兼容旧固件）；恢复策略要求
   `prev.power == 1`（本来就关机就不必再开）。
 
 > 固件每 30s 心跳重发 `ac/state`。服务可用"最后一条 `ac/state` 的到达时间"判断数据新鲜度，超时（如 >90s）但 `status.online=true` 时提示"状态可能过期"。

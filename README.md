@@ -128,7 +128,7 @@ systemd 单元**——broker 活着不代表发命令的那个服务活着，所
 | `ac/status` | ESP32 遗嘱（LWT）| `{"online":false}` |
 | `ac/env` | ESP32 → 树莓派（retained）| `{"temp":26,"humidity":55,"ok":true}` |
 | `ac/hb` | 树莓派 → ESP32（QoS0，不 retained）| `{"ts":1792078200}` |
-| `ac/event` | ESP32 → 树莓派（retained）| `{"type":"failsafe_off","ts":1792078200,"prev":{...}}` |
+| `ac/event` | ESP32 → 树莓派（不 retained）| `{"type":"failsafe_off","ts":1792078200,"prev":{...}}` |
 
 字段取值：`power` 0/1；`mode` 自动0/制冷1/除湿2/送风3/制热4；`temp` 16~30；`fan` 自动0/低1/中2/高3。指令只带需要改的字段，越界值会被夹取到合法范围。
 
@@ -136,9 +136,10 @@ systemd 单元**——broker 活着不代表发命令的那个服务活着，所
 「⚠️ 未确认」窗口只等这一条，每 30 s 的例行重发太慢。字段一个都不认识的命令会打日志忽略
 （并同样回一次状态，免得服务端空等）。
 
-`env` / `event` 是 retained 的，broker 会把最后一条重放给新订阅者——**服务端要按
-retained 标志和 `ts` 把"重放"和"刚发生"区分开**。`hb` 反过来必须**不** retained：
-一个活得比进程还久的心跳是假的。
+`env` 是 retained 的，broker 会把最后一条重放给新订阅者——**服务端要按 retained 标志和
+`ts` 把"重放"和"刚发生"区分开**。`hb` 与 `event` 反过来必须**不** retained：一个活得比
+进程还久的心跳是假的，一个活得比断电还久的"刚失联"事件更是假新鲜。`event` 仍带 `ts`，
+且只对 `ts` 在 10 分钟内的非 retained 事件动作。
 
 > 这是两个仓库的**唯一接口**。树莓派侧服务的完整规格（飞书卡片、按钮动作、时序、部署、验收）见 [`docs/rpi-feishu-interface-spec.md`](docs/rpi-feishu-interface-spec.md)。
 
