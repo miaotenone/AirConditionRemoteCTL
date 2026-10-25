@@ -4,6 +4,7 @@
 
 #include "config.h"
 #include "pins.h"
+#include "version.h"
 #include "ac_encoder.h"
 #include "ac_state.h"
 #include "dht_sensor.h"
@@ -207,7 +208,8 @@ static void failsafe_loop() {
 void setup() {
     Serial.begin(115200);
     delay(200);
-    Serial.println("\n[ac-gateway] boot");
+    Serial.printf("\n[ac-gateway] boot %s %s built %s %s\n",
+                  FW_TAG, FW_GIT_HASH, __DATE__, __TIME__);
 
     // The OLED is our only user-facing feedback, so bring it up FIRST --
     // web_config_run() below can block for a long time on the config portal.
