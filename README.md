@@ -53,7 +53,7 @@ tests/native/               原生单元测试
 
 ## 运行时行为
 
-**OLED 三页轮播**。屏幕分三页，每 5 秒横向滑动切换（约 240 ms 过渡），只在
+**OLED 四页轮播**。屏幕分四页，每 5 秒横向滑动切换（约 240 ms 过渡），只在
 内容真的变了才重绘，不再是每秒无脑刷屏：
 
 | 页 | 标题 | 内容 |
@@ -61,8 +61,15 @@ tests/native/               原生单元测试
 | 1 | `AIRCON` | 设定温度（大字号）、电源徽标、模式、风速 |
 | 2 | `ROOM` | DHT11 室温（大字号）、湿度、与设定值的差 `d±n` |
 | 3 | `LINK` | WiFi/MQTT 状态、IP、**服务心跳**（`SVC HB OK/LOST`）、运行时长 |
+| 4 | `FW v1.2` | **固件版本**：git 短哈希 + 编译日期/时间 —— 不插线就能确认烧的是哪一版 |
 
 传感器读失败时 ROOM 页直接写 `no signal`，**不会**拿上一次的旧值冒充。
+
+**固件自报版本**：第 4 页的哈希不是手写的，是构建时 `git rev-parse --short HEAD`
+注入的（`scripts/git_version.py` → `src/version.h`）；工作树有未提交改动会带
+`-dirty` 后缀。串口开机横幅打印同一份：
+`[ac-gateway] boot v1.2 <短哈希> built <日期> <时间>`。于是「设备现在跑的是哪一版」
+**可以直接问设备**，不必靠行为反推。
 
 **失联自动关机（fail-safe）**。设备把「WiFi+MQTT 通」和「收到服务心跳
 `<prefix>/hb`」都算作「还联系得上」，任何一半断了 **5 分钟**就发一帧红外关机，
@@ -214,7 +221,7 @@ python -m platformio device monitor              # 打开串口菜单
 
 | 步骤 | 操作 | 预期现象 |
 |---|---|---|
-| 0.1 | `pio run -t upload` 后开 `pio device monitor` | 打印 `[ac-gateway] boot`，无反复重启 |
+| 0.1 | `pio run -t upload` 后开 `pio device monitor` | 打印 `[ac-gateway] boot v1.2 <短哈希> built <日期> <时间>`，无反复重启 |
 | 0.2 | 观察串口 | 出现 `[wifi] trying stored ssid '...'`（首次未配网则直接 `[wifi] portal: join AP ...`） |
 
 ### 1. OLED（先接屏，其余不接）
