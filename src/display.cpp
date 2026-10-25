@@ -6,6 +6,7 @@
 #include <string.h>
 #include "pins.h"
 #include "config.h"
+#include "version.h"
 
 #if OLED_SH1106
 static U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
@@ -33,9 +34,11 @@ typedef void (*PageFn)(int16_t x);
 static void page_aircon(int16_t x);
 static void page_room(int16_t x);
 static void page_link(int16_t x);
+static void page_fw(int16_t x);
 
-static const uint8_t PAGE_COUNT = 3;
-static PageFn s_pages[PAGE_COUNT] = { page_aircon, page_room, page_link };
+static const uint8_t PAGE_COUNT = 4;
+static PageFn s_pages[PAGE_COUNT] = { page_aircon, page_room, page_link,
+                                      page_fw };
 
 static DisplayInfo s_info;
 static bool     s_ok          = false;  // an OLED answered the probe
@@ -190,6 +193,28 @@ static void page_link(int16_t x) {
         const char* m = "FAILSAFE";
         u8g2.drawStr(x + W - 4 - (int16_t)u8g2.getStrWidth(m), 60, m);
     }
+}
+
+// Which build is this? The one question the unit otherwise cannot answer: the
+// LINK page shows live state and NVS holds the remembered AC state, but neither
+// names the firmware. Values come from version.h (git revision injected at build
+// time), so a reflashed board is identifiable by looking at it -- no cable.
+static void page_fw(int16_t x) {
+    u8g2.setFont(u8g2_font_6x12_tf);
+
+    char title[16];
+    snprintf(title, sizeof(title), "FW %s", FW_TAG);
+    header(x, title, 4);
+
+    char row[32];
+    snprintf(row, sizeof(row), "%s", FW_GIT_HASH);
+    u8g2.drawStr(x + 4, 24, row);
+
+    snprintf(row, sizeof(row), "built %s", __DATE__);
+    u8g2.drawStr(x + 4, 38, row);
+
+    snprintf(row, sizeof(row), "%s", __TIME__);
+    u8g2.drawStr(x + 4, 52, row);
 }
 
 // ---------------------------------------------------------------------------
