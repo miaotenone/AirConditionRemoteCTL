@@ -22,4 +22,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "== link_guard =="
 g++ -std=c++17 -I src tests/native/link_guard_test.cpp src/link_guard.cpp -o build/link_guard_test.exe
 & build/link_guard_test.exe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Write-Host "== reset_info =="
+g++ -std=c++17 -I src tests/native/reset_info_test.cpp src/reset_info.cpp -o build/reset_info_test.exe
+& build/reset_info_test.exe
 exit $LASTEXITCODE

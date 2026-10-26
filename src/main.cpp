@@ -5,6 +5,7 @@
 #include "config.h"
 #include "pins.h"
 #include "version.h"
+#include "boot_diag.h"
 #include "ac_encoder.h"
 #include "ac_state.h"
 #include "dht_sensor.h"
@@ -210,11 +211,15 @@ void setup() {
     delay(200);
     Serial.printf("\n[ac-gateway] boot %s %s built %s %s\n",
                   FW_TAG, FW_GIT_HASH, __DATE__, __TIME__);
+    boot_diag_begin();
+    Serial.printf("[ac-gateway] boot #%u rst=%s%s\n", boot_diag_count(),
+                  boot_diag_reason(),
+                  boot_diag_power_cycled() ? " (power cycle)" : "");
 
     // The OLED is our only user-facing feedback, so bring it up FIRST --
     // web_config_run() below can block for a long time on the config portal.
     display_begin();
-    display_lines("AirCon Gateway", "starting...", "", "");
+    boot_diag_screen("starting...");
 
     config_store_load(g_cfg);
     // The AC is still wherever we left it, so a reboot must not rewrite that.

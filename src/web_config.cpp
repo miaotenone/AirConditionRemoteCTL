@@ -4,6 +4,7 @@
 #include <WiFiManager.h>
 #include "config.h"
 #include "pins.h"
+#include "boot_diag.h"
 #include "display.h"
 #include "serial_console.h"
 #include "wifi_policy.h"
@@ -58,6 +59,12 @@ static bool try_stored(AppConfig& cfg) {
     }
 
     Serial.printf("[wifi] trying stored ssid '%s'", cfg.wifi_ssid.c_str());
+    // Painted BEFORE the WiFi stack comes up, which is the whole point: this
+    // call is where the gateway draws its biggest current spike (RF bring-up),
+    // and a supply that cannot take it stops the boot right here. Whoever is
+    // looking at the screen then sees this phase, not the next one -- that is
+    // how "stuck on starting..." turned into "stuck on wifi up" (boot_diag.h).
+    boot_diag_screen("wifi up");
     // Must precede the first mode()/begin(): the core latches the persistence
     // flag when it initialises the driver, which the mode() call below does.
     WiFi.persistent(false);
