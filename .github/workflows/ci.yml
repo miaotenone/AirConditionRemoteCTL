@@ -1,0 +1,51 @@
+name: Quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native / ${{ matrix.os }} / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.14']
+        include:
+          - os: ubuntu-latest
+            python: '3.10'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install quality tools
+        run: python -m pip install -r requirements-dev.txt
+      - name: Quality gate (no hardware)
+        run: python scripts/check.py
+      - name: PowerShell compatibility entrypoint
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/run_native_tests.ps1
+
+  firmware:
+    name: Firmware / ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [esp32dev, selftest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install pinned PlatformIO
+        run: python -m pip install platformio==6.2.0
+      - name: Compile only (never upload)
+        run: python -m platformio run -e ${{ matrix.environment }}

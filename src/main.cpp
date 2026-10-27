@@ -16,37 +16,36 @@
 #include "web_config.h"
 #include "serial_console.h"
 #include "net_mqtt.h"
+#include "failsafe.h"
 
 #if OTA_ENABLED
 #include <ArduinoOTA.h>
 #endif
 
 static AppConfig g_cfg;
-static AcState   g_state;
+static AcState g_state;
 
 static volatile bool g_cmd_pending = false;
-static char    g_cmd_buf[256];
-static size_t  g_cmd_len = 0;
-static char    g_last_action[24] = "boot";
+static char g_cmd_buf[256];
+static size_t g_cmd_len = 0;
+static char g_last_action[24] = "boot";
 
 // Last DHT11 reading (design 6.1). Published to <prefix>/env and shown on the
 // room page; the closed-loop decision itself lives on the Raspberry Pi.
-static bool g_env_ok  = false;
-static int  g_room_c  = 0;
-static int  g_humidity = 0;
+static bool g_env_ok = false;
+static int g_room_c = 0;
+static int g_humidity = 0;
 
 // Fail-safe bookkeeping (design 8). The AC gets turned off when the device
 // loses contact with whoever is making the decisions, so we have to remember
 // whether we ever had contact, whether we already tripped, and what the state
 // was before we forced it off.
-static bool     g_failsafe_armed   = false;
-static bool     g_failsafe_tripped = false;
-static bool     g_failsafe_report  = false;  // the event still needs sending
-static uint32_t g_last_contact     = 0;
-static AcState  g_prev_state;
+static FailsafeStatus g_failsafe;
+static bool g_failsafe_report = false; // the event still needs sending
+static AcState g_prev_state;
 
 // Kept alive so DisplayInfo.ip stays valid (a temporary String would not).
-static String   g_ip_str;
+static String g_ip_str;
 
 static const char* net_state_name() {
     if (net_connected()) return "OK";
@@ -56,16 +55,16 @@ static const char* net_state_name() {
 
 static void refresh_display() {
     DisplayInfo info;
-    info.ac            = g_state;
-    info.net_state     = net_state_name();
-    g_ip_str           = WiFi.localIP().toString();
-    info.ip            = g_ip_str.c_str();
-    info.env_ok        = g_env_ok;
-    info.room_c        = g_room_c;
-    info.humidity      = g_humidity;
+    info.ac = g_state;
+    info.net_state = net_state_name();
+    g_ip_str = WiFi.localIP().toString();
+    info.ip = g_ip_str.c_str();
+    info.env_ok = g_env_ok;
+    info.room_c = g_room_c;
+    info.humidity = g_humidity;
     info.service_alive = net_service_alive();
-    info.failsafe      = g_failsafe_tripped;
-    info.uptime_s      = millis() / 1000;
+    info.failsafe = g_failsafe.tripped;
+    info.uptime_s = millis() / 1000;
     display_show_info(info);
 }
 
@@ -88,31 +87,29 @@ static void apply_pending_command() {
     JsonObject obj = doc.as<JsonObject>();
     if (obj.isNull()) return;
 
-    bool changed = false;
+    // apply_field reports recognition, not value equality. A recognized field
+    // still persists/sends the full state even when its value is unchanged.
+    bool recognized = false;
     for (JsonPair kv : obj) {
         int v = kv.value().as<int>();
         if (ac_state_apply_field(g_state, kv.key().c_str(), v)) {
-            changed = true;
+            recognized = true;
         } else {
             Serial.printf("[cmd] unknown field '%s' ignored\n", kv.key().c_str());
         }
     }
-    if (!changed) {
-        // The command asked for exactly what we already have. There is nothing
-        // for the IR module to do -- but the service's confirmation window is
-        // 5 s wide, and our 30 s state heartbeat does not fit inside it, so a
-        // silent "no change" is what the service reports as "the device never
-        // answered". Echo the state now: no change is still an answer (design
-        // 18.12 #1).
+    if (!recognized) {
+        // Empty/unknown-only objects also get an immediate state echo, but no
+        // NVS write or IR frame. The service's confirmation window is only 5 s.
         net_publish_state(g_cfg, g_state, true);
         return;
     }
 
-    state_store_save(g_state);      // remember it before anything else can fail
+    state_store_save(g_state); // remember it before anything else can fail
 
     uint8_t frame[MULTI_PARAM_FRAME_SIZE];
-    size_t n = build_multi_param_frame(frame, g_cfg.brand, g_state.power,
-                                       g_state.mode, g_state.temp, g_state.fan);
+    size_t n = build_multi_param_frame(frame, g_cfg.brand, g_state.power, g_state.mode,
+                                       g_state.temp, g_state.fan);
     ir_module_send(frame, n);
     net_publish_state(g_cfg, g_state, true);
 
@@ -137,13 +134,15 @@ static void dht_loop() {
 
     int t = g_room_c, h = g_humidity;
     bool ok = dht_read(t, h);
-    g_env_ok   = ok;
-    g_room_c   = t;
+    g_env_ok = ok;
+    g_room_c = t;
     g_humidity = h;
 
     net_publish_env(g_cfg, t, h, ok);
-    if (ok) Serial.printf("[dht] room=%dC humidity=%d%%\n", t, h);
-    else    Serial.println("[dht] read failed");
+    if (ok)
+        Serial.printf("[dht] room=%dC humidity=%d%%\n", t, h);
+    else
+        Serial.println("[dht] read failed");
 }
 
 // --- fail-safe (design 8) --------------------------------------------------
@@ -159,20 +158,21 @@ static void dht_loop() {
 static void failsafe_loop() {
     uint32_t now = millis();
     bool healthy = net_connected() && net_service_alive();
+    FailsafeAction action = failsafe_action(g_failsafe, healthy, now, LINK_LOST_OFF_MS);
 
     if (healthy) {
-        g_last_contact = now;
+        g_failsafe.last_contact_ms = now;
 
         // Boot guard: never trip before we have proven we can reach the
         // service at least once. Otherwise a device that boots without WiFi
         // would "fail safe" against an AC it never controlled.
-        if (!g_failsafe_armed) {
-            g_failsafe_armed = true;
+        if (action == FailsafeAction::arm) {
+            g_failsafe.armed = true;
             Serial.println("[failsafe] armed (first contact)");
         }
 
-        if (g_failsafe_tripped) {
-            g_failsafe_tripped = false;
+        if (action == FailsafeAction::restore) {
+            g_failsafe.tripped = false;
             net_publish_state(g_cfg, g_state, true);
             Serial.println("[failsafe] contact restored");
             refresh_display();
@@ -185,8 +185,7 @@ static void failsafe_loop() {
         return;
     }
 
-    if (!g_failsafe_armed || g_failsafe_tripped) return;
-    if ((uint32_t)(now - g_last_contact) < LINK_LOST_OFF_MS) return;
+    if (action != FailsafeAction::turn_off) return;
 
     Serial.println("[failsafe] no contact for 5 min -> AC off");
     g_prev_state = g_state;
@@ -194,13 +193,13 @@ static void failsafe_loop() {
     state_store_save(g_state);
 
     uint8_t frame[MULTI_PARAM_FRAME_SIZE];
-    size_t n = build_multi_param_frame(frame, g_cfg.brand, g_state.power,
-                                       g_state.mode, g_state.temp, g_state.fan);
+    size_t n = build_multi_param_frame(frame, g_cfg.brand, g_state.power, g_state.mode,
+                                       g_state.temp, g_state.fan);
     ir_module_send(frame, n);
-    net_publish_state(g_cfg, g_state, false);   // a no-op while offline
+    net_publish_state(g_cfg, g_state, false); // a no-op while offline
 
-    g_failsafe_tripped = true;
-    g_failsafe_report  = true;
+    g_failsafe.tripped = true;
+    g_failsafe_report = true;
     snprintf(g_last_action, sizeof(g_last_action), "failsafe @%lus",
              (unsigned long)(millis() / 1000));
     refresh_display();
@@ -209,11 +208,10 @@ static void failsafe_loop() {
 void setup() {
     Serial.begin(115200);
     delay(200);
-    Serial.printf("\n[ac-gateway] boot %s %s built %s %s\n",
-                  FW_TAG, FW_GIT_HASH, __DATE__, __TIME__);
+    Serial.printf("\n[ac-gateway] boot %s %s built %s %s\n", FW_TAG, FW_GIT_HASH, __DATE__,
+                  __TIME__);
     boot_diag_begin();
-    Serial.printf("[ac-gateway] boot #%u rst=%s%s\n", boot_diag_count(),
-                  boot_diag_reason(),
+    Serial.printf("[ac-gateway] boot #%u rst=%s%s\n", boot_diag_count(), boot_diag_reason(),
                   boot_diag_power_cycled() ? " (power cycle)" : "");
 
     // The OLED is our only user-facing feedback, so bring it up FIRST --
@@ -244,8 +242,14 @@ void setup() {
     unsigned long t0 = millis();
     while (millis() - t0 < 2000) {
         int c = Serial.read();
-        if (c == 'r' || c == 'R') { want_reset = true; break; }
-        if (reset_button_hold_detected()) { want_reset = true; break; }
+        if (c == 'r' || c == 'R') {
+            want_reset = true;
+            break;
+        }
+        if (reset_button_hold_detected()) {
+            want_reset = true;
+            break;
+        }
         delay(5);
     }
     Serial.println(want_reset ? "RESET" : "ok");
@@ -261,8 +265,7 @@ void setup() {
     // "portal open", "portal timeout"), so setup() does not pre-paint one here.
     web_config_run(g_cfg);
 
-    display_lines("AirCon Gateway", "WiFi OK",
-                  WiFi.localIP().toString().c_str(), "starting MQTT");
+    display_lines("AirCon Gateway", "WiFi OK", WiFi.localIP().toString().c_str(), "starting MQTT");
 
     ir_module_begin();
     dht_begin();
@@ -277,8 +280,8 @@ void setup() {
 
     net_publish_state(g_cfg, g_state, true);
     refresh_display();
-    Serial.printf("[ac-gateway] ready, brand=0x%02X topic=%s\n",
-                  g_cfg.brand, g_cfg.topic_prefix.c_str());
+    Serial.printf("[ac-gateway] ready, brand=0x%02X topic=%s\n", g_cfg.brand,
+                  g_cfg.topic_prefix.c_str());
 }
 
 void loop() {

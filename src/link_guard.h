@@ -19,21 +19,17 @@
 //   2. redial        then, at most every redial_every_ms
 //   3. reboot        at reboot_after_ms            nothing else is left
 
-enum LinkGuardAction {
-    LINK_GUARD_IDLE = 0,
-    LINK_GUARD_REDIAL,
-    LINK_GUARD_REBOOT
-};
+enum LinkGuardAction { LINK_GUARD_IDLE = 0, LINK_GUARD_REDIAL, LINK_GUARD_REBOOT };
 
 // All times are millis() readings. Every field is `unsigned long` on purpose:
 // each subtraction is unsigned, so this survives the ~49-day millis() wrap.
 struct LinkGuardInput {
-    unsigned long now_ms;           // millis() right now
-    unsigned long last_healthy_ms;  // last time WiFi + MQTT were both up
-    unsigned long last_redial_ms;   // last forced dial (0 = never)
-    unsigned long redial_after_ms;  // silence before the first forced dial
-    unsigned long redial_every_ms;  // and the minimum spacing between dials
-    unsigned long reboot_after_ms;  // silence before giving up on dialling
+    unsigned long now_ms;          // millis() right now
+    unsigned long last_healthy_ms; // last time WiFi + MQTT were both up
+    unsigned long last_redial_ms;  // last forced dial (0 = never)
+    unsigned long redial_after_ms; // silence before the first forced dial
+    unsigned long redial_every_ms; // and the minimum spacing between dials
+    unsigned long reboot_after_ms; // silence before giving up on dialling
 };
 
 enum LinkGuardAction link_guard_action(const LinkGuardInput& in);

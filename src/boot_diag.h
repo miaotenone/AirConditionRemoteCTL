@@ -27,6 +27,6 @@ void boot_diag_begin();
 // painted *before* the risky call, not after it.
 void boot_diag_screen(const char* phase);
 
-unsigned    boot_diag_count();         // boots since the RTC domain last lost power
-const char* boot_diag_reason();        // reset_reason_name() of the last reset
-bool        boot_diag_power_cycled();  // true = first boot since a real power-up
+unsigned boot_diag_count();     // boots since the RTC domain last lost power
+const char* boot_diag_reason(); // reset_reason_name() of the last reset
+bool boot_diag_power_cycled();  // true = first boot since a real power-up

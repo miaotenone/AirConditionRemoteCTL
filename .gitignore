@@ -14,6 +14,8 @@ build/
 # Python bytecode from scripts/ (which share the _port helper)
 __pycache__/
 *.pyc
+.venv/
+.ruff_cache/
 
 # Editor
 .vscode/

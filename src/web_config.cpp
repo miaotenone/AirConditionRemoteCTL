@@ -8,18 +8,18 @@
 #include "display.h"
 #include "serial_console.h"
 #include "wifi_policy.h"
-#include <stdio.h>   // snprintf for the on-screen countdown
+#include <stdio.h> // snprintf for the on-screen countdown
 #include <string.h>
-#include <esp_wifi.h>  // esp_wifi_get_config: bounded read of the saved creds
+#include <esp_wifi.h> // esp_wifi_get_config: bounded read of the saved creds
 
 // How long the BOOT button has to be held before we treat it as "I want to
 // configure this device". Long enough not to fire on a stray bump.
 static const uint32_t RESET_HOLD_MS = 3000;
 
 bool reset_button_hold_detected() {
-    static bool     down  = false;
+    static bool down = false;
     static uint32_t since = 0;
-    static bool     fired = false;
+    static bool fired = false;
 
     if (digitalRead(PIN_BOOT) != LOW) {
         down = false;
@@ -27,7 +27,7 @@ bool reset_button_hold_detected() {
         return false;
     }
     if (!down) {
-        down  = true;
+        down = true;
         since = millis();
         return false;
     }
@@ -77,7 +77,7 @@ static bool try_stored(AppConfig& cfg) {
     snprintf(line, sizeof(line), "trying: %.24s", cfg.wifi_ssid.c_str());
     display_lines("AirCon Gateway", line, "wait 20s", "hold BOOT to reset");
 
-    unsigned long t0      = millis();
+    unsigned long t0 = millis();
     unsigned long lastDot = 0;
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_STA_TIMEOUT_MS) {
         delay(50);
@@ -85,7 +85,10 @@ static bool try_stored(AppConfig& cfg) {
         // provision a board that has no credentials.
         serial_console_poll(cfg);
         if (reset_button_hold_detected()) reboot_into_portal("BOOT held");
-        if (millis() - lastDot >= 1000) { lastDot = millis(); Serial.print('.'); }
+        if (millis() - lastDot >= 1000) {
+            lastDot = millis();
+            Serial.print('.');
+        }
     }
     Serial.println();
 
@@ -122,16 +125,16 @@ struct PortalFields {
 };
 
 static void portal_fields_to_cfg(AppConfig& cfg, PortalFields& f) {
-    cfg.mqtt_host    = f.host->getValue();
-    cfg.mqtt_port    = portal_port_or(f.port->getValue(), cfg.mqtt_port);
-    cfg.mqtt_user    = f.user->getValue();
-    cfg.mqtt_pass    = f.pass->getValue();
+    cfg.mqtt_host = f.host->getValue();
+    cfg.mqtt_port = portal_port_or(f.port->getValue(), cfg.mqtt_port);
+    cfg.mqtt_user = f.user->getValue();
+    cfg.mqtt_pass = f.pass->getValue();
     cfg.topic_prefix = f.prefix->getValue();
-    cfg.device_name  = f.device->getValue();
-    cfg.brand        = portal_brand_or(f.brand->getValue(), cfg.brand);
+    cfg.device_name = f.device->getValue();
+    cfg.brand = portal_brand_or(f.brand->getValue(), cfg.brand);
 
     if (cfg.topic_prefix.isEmpty()) cfg.topic_prefix = DEFAULT_TOPIC_PREFIX;
-    if (cfg.device_name.isEmpty())  cfg.device_name  = DEFAULT_DEVICE_NAME;
+    if (cfg.device_name.isEmpty()) cfg.device_name = DEFAULT_DEVICE_NAME;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,17 +149,29 @@ static bool wait_portal(AppConfig& cfg) {
     wm.setDebugOutput(false);
     wm.setConfigPortalTimeout(WIFI_PORTAL_TIMEOUT_S);
     wm.setConfigPortalBlocking(false);
-    wm.setConnectTimeout(5);        // keep a bad pick from stalling for a minute
-    wm.setAPClientCheck(true);      // a connected phone keeps the portal alive
+    wm.setConnectTimeout(5);   // keep a bad pick from stalling for a minute
+    wm.setAPClientCheck(true); // a connected phone keeps the portal alive
 
     // Custom fields shown on the config page.
-    char host[64];   strncpy(host,   cfg.mqtt_host.c_str(),    sizeof(host) - 1);   host[sizeof(host) - 1] = '\0';
-    char port[8];    snprintf(port, sizeof(port), "%u", (unsigned)cfg.mqtt_port);
-    char user[48];   strncpy(user,   cfg.mqtt_user.c_str(),    sizeof(user) - 1);   user[sizeof(user) - 1] = '\0';
-    char pass[48];   strncpy(pass,   cfg.mqtt_pass.c_str(),    sizeof(pass) - 1);   pass[sizeof(pass) - 1] = '\0';
-    char prefix[32]; strncpy(prefix, cfg.topic_prefix.c_str(), sizeof(prefix) - 1); prefix[sizeof(prefix) - 1] = '\0';
-    char dev[32];    strncpy(dev,    cfg.device_name.c_str(),  sizeof(dev) - 1);    dev[sizeof(dev) - 1] = '\0';
-    char brand[8];   snprintf(brand, sizeof(brand), "0x%02X", cfg.brand);
+    char host[64];
+    strncpy(host, cfg.mqtt_host.c_str(), sizeof(host) - 1);
+    host[sizeof(host) - 1] = '\0';
+    char port[8];
+    snprintf(port, sizeof(port), "%u", (unsigned)cfg.mqtt_port);
+    char user[48];
+    strncpy(user, cfg.mqtt_user.c_str(), sizeof(user) - 1);
+    user[sizeof(user) - 1] = '\0';
+    char pass[48];
+    strncpy(pass, cfg.mqtt_pass.c_str(), sizeof(pass) - 1);
+    pass[sizeof(pass) - 1] = '\0';
+    char prefix[32];
+    strncpy(prefix, cfg.topic_prefix.c_str(), sizeof(prefix) - 1);
+    prefix[sizeof(prefix) - 1] = '\0';
+    char dev[32];
+    strncpy(dev, cfg.device_name.c_str(), sizeof(dev) - 1);
+    dev[sizeof(dev) - 1] = '\0';
+    char brand[8];
+    snprintf(brand, sizeof(brand), "0x%02X", cfg.brand);
 
     WiFiManagerParameter p_host("mqtt_host", "MQTT host", host, sizeof(host));
     WiFiManagerParameter p_port("mqtt_port", "MQTT port", port, sizeof(port));
@@ -174,7 +189,7 @@ static bool wait_portal(AppConfig& cfg) {
     wm.addParameter(&p_dev);
     wm.addParameter(&p_brand);
 
-    PortalFields fields = { &p_host, &p_port, &p_user, &p_pass, &p_prefix, &p_dev, &p_brand };
+    PortalFields fields = {&p_host, &p_port, &p_user, &p_pass, &p_prefix, &p_dev, &p_brand};
 
     // Persist the moment the user presses Save, not only when a connection
     // succeeds. The SSID box on the wifi page is a *placeholder*, not a value,
@@ -187,14 +202,12 @@ static bool wait_portal(AppConfig& cfg) {
     wm.setSaveParamsCallback([&cfg, &fields]() {
         portal_fields_to_cfg(cfg, fields);
         config_store_save(cfg);
-        Serial.printf("[wifi] settings saved from the portal (host=%s)\n",
-                      cfg.mqtt_host.c_str());
+        Serial.printf("[wifi] settings saved from the portal (host=%s)\n", cfg.mqtt_host.c_str());
     });
 
     Serial.printf("[wifi] portal: join AP '%s' (pw '%s'), open http://192.168.4.1\n",
                   WIFI_PORTAL_AP_NAME, WIFI_PORTAL_AP_PASS);
-    display_lines("AirCon Gateway", "portal open", "AP: AC-Gateway-Setup",
-                  "pw: acgateway");
+    display_lines("AirCon Gateway", "portal open", "AP: AC-Gateway-Setup", "pw: acgateway");
 
     // In non-blocking mode this raises the AP + web server and returns at once;
     // process() below is what then services requests. Calling process() without
@@ -203,8 +216,8 @@ static bool wait_portal(AppConfig& cfg) {
     wm.startConfigPortal(WIFI_PORTAL_AP_NAME, WIFI_PORTAL_AP_PASS);
 
     unsigned long opened = millis();
-    unsigned long t0     = millis();   // restarts while a client is attached
-    unsigned long last_shown = millis() - 1000;   // paint on the first pass
+    unsigned long t0 = millis();                // restarts while a client is attached
+    unsigned long last_shown = millis() - 1000; // paint on the first pass
     while (!wm.process()) {
         // Our own clock, not the library's: it bumps its portal-start time on
         // every web request, which would extend the timeout indefinitely. A
@@ -240,7 +253,7 @@ static bool wait_portal(AppConfig& cfg) {
         if (millis() - last_shown >= 1000) {
             last_shown = millis();
             char countdown[24];
-            unsigned long left    = portal_seconds_left(millis(), t0, WIFI_PORTAL_TIMEOUT_S);
+            unsigned long left = portal_seconds_left(millis(), t0, WIFI_PORTAL_TIMEOUT_S);
             unsigned long hard_left = portal_seconds_left(millis(), opened, PORTAL_HARD_TIMEOUT_S);
             // While a phone is attached the idle clock keeps restarting, so the
             // countdown would read "180s" forever and then reboot with no
@@ -252,8 +265,7 @@ static bool wait_portal(AppConfig& cfg) {
                 snprintf(countdown, sizeof(countdown), "portal %lus", left);
             }
             Serial.printf("[wifi] %s%s\n", countdown, client ? " (client attached)" : "");
-            display_lines("AirCon Gateway", "portal open", countdown,
-                          "192.168.4.1");
+            display_lines("AirCon Gateway", "portal open", countdown, "192.168.4.1");
         }
 
         serial_console_poll(cfg);
@@ -282,15 +294,17 @@ static bool wait_portal(AppConfig& cfg) {
     char ssid_buf[33];
     char pass_buf[65];
     if (esp_wifi_get_config(WIFI_IF_STA, &wconf) == ESP_OK) {
-        wifi_field_copy(ssid_buf, sizeof(ssid_buf), (const char*)wconf.sta.ssid,     sizeof(wconf.sta.ssid));
-        wifi_field_copy(pass_buf, sizeof(pass_buf), (const char*)wconf.sta.password, sizeof(wconf.sta.password));
+        wifi_field_copy(ssid_buf, sizeof(ssid_buf), (const char*)wconf.sta.ssid,
+                        sizeof(wconf.sta.ssid));
+        wifi_field_copy(pass_buf, sizeof(pass_buf), (const char*)wconf.sta.password,
+                        sizeof(wconf.sta.password));
     } else {
         ssid_buf[0] = '\0';
         pass_buf[0] = '\0';
     }
 
-    WifiCred cred = wifi_cred_after_portal(ssid_buf, pass_buf,
-                                           cfg.wifi_ssid.c_str(), cfg.wifi_pass.c_str());
+    WifiCred cred =
+        wifi_cred_after_portal(ssid_buf, pass_buf, cfg.wifi_ssid.c_str(), cfg.wifi_pass.c_str());
     cfg.wifi_ssid = cred.ssid;
     cfg.wifi_pass = cred.pass;
 
@@ -309,6 +323,6 @@ void web_config_run(AppConfig& cfg) {
 void web_config_reset() {
     WiFiManager wm;
     wm.setDebugOutput(false);
-    wm.resetSettings();      // forget the saved AP / password
-    config_store_clear();    // forget MQTT + app settings
+    wm.resetSettings();   // forget the saved AP / password
+    config_store_clear(); // forget MQTT + app settings
 }

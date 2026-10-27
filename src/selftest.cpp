@@ -23,8 +23,8 @@
 
 static AcState g_state;
 static uint8_t g_brand = BRAND_MIDEA1;
-static char    g_line[80];
-static size_t  g_len = 0;
+static char g_line[80];
+static size_t g_len = 0;
 
 static const char* mode_str(uint8_t m) {
     static const char* t[] = {"AUTO", "COOL", "DRY", "FAN", "HEAT"};
@@ -37,9 +37,9 @@ static const char* fan_str(uint8_t f) {
 }
 
 static void print_state() {
-    Serial.printf("[state] brand=0x%02X power=%d mode=%d(%s) temp=%d fan=%d(%s)\n",
-                  g_brand, g_state.power, g_state.mode, mode_str(g_state.mode),
-                  g_state.temp, g_state.fan, fan_str(g_state.fan));
+    Serial.printf("[state] brand=0x%02X power=%d mode=%d(%s) temp=%d fan=%d(%s)\n", g_brand,
+                  g_state.power, g_state.mode, mode_str(g_state.mode), g_state.temp, g_state.fan,
+                  fan_str(g_state.fan));
 }
 
 static void i2c_scan_pins(uint8_t sda, uint8_t scl, uint32_t freq, const char* label) {
@@ -87,8 +87,7 @@ static void i2c_scan_clocks() {
     const uint32_t freqs[] = {100000, 50000, 25000, 10000, 5000};
     char label[64];
     for (size_t i = 0; i < sizeof(freqs) / sizeof(freqs[0]); ++i) {
-        snprintf(label, sizeof(label), "SDA=GPIO21 SCL=GPIO22 @ %lu Hz",
-                 (unsigned long)freqs[i]);
+        snprintf(label, sizeof(label), "SDA=GPIO21 SCL=GPIO22 @ %lu Hz", (unsigned long)freqs[i]);
         i2c_scan_pins(PIN_OLED_SDA, PIN_OLED_SCL, freqs[i], label);
     }
     Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
@@ -118,22 +117,23 @@ static int rise_us(uint8_t pin, bool internal_pull) {
 }
 
 static void wire_check() {
-    Wire.end();                        // hand the pins back before poking them
+    Wire.end(); // hand the pins back before poking them
 
     for (int i = 0; i < 2; ++i) {
-        uint8_t     pin = (i == 0) ? PIN_OLED_SDA : PIN_OLED_SCL;
-        const char* n   = (i == 0) ? "SDA" : "SCL";
+        uint8_t pin = (i == 0) ? PIN_OLED_SDA : PIN_OLED_SCL;
+        const char* n = (i == 0) ? "SDA" : "SCL";
 
-        pinMode(pin, INPUT_PULLUP);     // expect 1: neither shorted nor held low
+        pinMode(pin, INPUT_PULLUP); // expect 1: neither shorted nor held low
         delay(2);
         int pulled = digitalRead(pin);
 
         // Reading a pin without discharging it first proves nothing: a floating
         // pin keeps its charge for milliseconds. Time the climb back instead.
-        int alone = rise_us(pin, false);   // the module's pull-up by itself
-        int real  = rise_us(pin, true);    // plus ours: the edge I2C gets
+        int alone = rise_us(pin, false); // the module's pull-up by itself
+        int real = rise_us(pin, true);   // plus ours: the edge I2C gets
 
-        Serial.printf("[wire] %s GPIO%d: idle=%d | module's pull-up alone -> %d us | with ours too -> %d us\n",
+        Serial.printf("[wire] %s GPIO%d: idle=%d | module's pull-up alone -> %d us | with ours too "
+                      "-> %d us\n",
                       n, pin, pulled, alone, real);
         pinMode(pin, INPUT_PULLUP);
     }
@@ -154,9 +154,9 @@ static void wire_check() {
 //: a straight-through loom is exactly what makes the RX side read as an echo
 //: of our own transmissions: it is crosstalk from the wire running next to it.
 static void ir_line_check() {
-    int rx_rise = rise_us(PIN_IR_RX, false);   // who holds OUR rx up?
+    int rx_rise = rise_us(PIN_IR_RX, false); // who holds OUR rx up?
     Serial.printf("[ir ] our RX (GPIO%d) released from low -> %d us\n", PIN_IR_RX, rx_rise);
-    int tx_rise = rise_us(PIN_IR_TX, false);   // is something else on OUR tx?
+    int tx_rise = rise_us(PIN_IR_TX, false); // is something else on OUR tx?
     Serial.printf("[ir ] our TX (GPIO%d) released from low -> %d us\n", PIN_IR_TX, tx_rise);
 
     // Only our RX line tells us anything: our own UART keeps driving our TX pin
@@ -196,8 +196,7 @@ static void ir_ack_sweep() {
     for (int n = 0; n < RUNS; ++n) {
         uint8_t frame[MULTI_PARAM_FRAME_SIZE];
         uint8_t temp = (n % 2) ? 25 : 24;
-        build_multi_param_frame(frame, g_brand, AC_POWER_OFF, AC_MODE_COOL,
-                                temp, AC_FAN_AUTO);
+        build_multi_param_frame(frame, g_brand, AC_POWER_OFF, AC_MODE_COOL, temp, AC_FAN_AUTO);
         ir_module_send(frame, MULTI_PARAM_FRAME_SIZE);
 
         uint8_t rx[64];
@@ -209,15 +208,18 @@ static void ir_ack_sweep() {
                 rx[got++] = (uint8_t)Serial2.read();
                 for (size_t i = 0; i + sizeof(ACK) <= got; ++i) {
                     size_t j = 0;
-                    while (j < sizeof(ACK) && rx[i + j] == ACK[j]) ++j;
-                    if (j == sizeof(ACK)) { acked = true; break; }
+                    while (j < sizeof(ACK) && rx[i + j] == ACK[j])
+                        ++j;
+                    if (j == sizeof(ACK)) {
+                        acked = true;
+                        break;
+                    }
                 }
             }
         }
         if (acked) ++ok;
         Serial.printf("[ir ] %d/%d: %-6s (%u bytes, %lu ms)\n", n + 1, RUNS,
-                      acked ? "ack" : "no ack",
-                      (unsigned)got, (unsigned long)(millis() - t0));
+                      acked ? "ack" : "no ack", (unsigned)got, (unsigned long)(millis() - t0));
         delay(300);
     }
 
@@ -234,8 +236,8 @@ static void ir_ack_sweep() {
 
 static void send_current(const char* why) {
     uint8_t frame[MULTI_PARAM_FRAME_SIZE];
-    size_t n = build_multi_param_frame(frame, g_brand, g_state.power,
-                                       g_state.mode, g_state.temp, g_state.fan);
+    size_t n = build_multi_param_frame(frame, g_brand, g_state.power, g_state.mode, g_state.temp,
+                                       g_state.fan);
     Serial.printf("[ir ] sending frame (%s)\n", why);
     ir_module_send(frame, n);
     print_state();
@@ -266,113 +268,114 @@ static void print_help() {
 }
 
 static void handle_line(char* line) {
-    while (*line == ' ') ++line;
+    while (*line == ' ')
+        ++line;
     if (*line == '\0') return;
 
     char cmd = (char)tolower((unsigned char)line[0]);
     char* arg = line + 1;
-    while (*arg == ' ') ++arg;
+    while (*arg == ' ')
+        ++arg;
     int v = atoi(arg);
 
     switch (cmd) {
-        case 'h':
-        case '?':
-            print_help();
-            print_state();
-            break;
+    case 'h':
+    case '?':
+        print_help();
+        print_state();
+        break;
 
-        case 'i':
-            i2c_scan();
-            break;
+    case 'i':
+        i2c_scan();
+        break;
 
-        case 'w':
-            wire_check();
-            break;
+    case 'w':
+        wire_check();
+        break;
 
-        case 'x':
-            i2c_scan_swapped();
-            break;
+    case 'x':
+        i2c_scan_swapped();
+        break;
 
-        case 'q':
-            i2c_scan_clocks();
-            break;
+    case 'q':
+        i2c_scan_clocks();
+        break;
 
-        case 'u':
-            ir_line_check();
-            break;
+    case 'u':
+        ir_line_check();
+        break;
 
-        case 'k':
-            ir_ack_sweep();
-            break;
+    case 'k':
+        ir_ack_sweep();
+        break;
 
-        case 'o':
-            Serial.println("[oled] running test patterns (watch the screen)...");
-            display_test_patterns();
-            display_show_ac(g_state, "OLED OK", "");
-            Serial.println("[oled] done. Garbled/blank -> try the other OLED_SH1106 value.");
-            break;
+    case 'o':
+        Serial.println("[oled] running test patterns (watch the screen)...");
+        display_test_patterns();
+        display_show_ac(g_state, "OLED OK", "");
+        Serial.println("[oled] done. Garbled/blank -> try the other OLED_SH1106 value.");
+        break;
 
-        case 'd':
-            print_state();
-            break;
+    case 'd':
+        print_state();
+        break;
 
-        case 'r': {
-            uint8_t frame[MULTI_PARAM_FRAME_SIZE];
-            build_multi_param_frame(frame, BRAND_MIDEA1, AC_POWER_ON,
-                                    AC_MODE_COOL, 24, AC_FAN_AUTO);
-            Serial.println("[ir ] sending REFERENCE frame");
-            ir_module_send(frame, MULTI_PARAM_FRAME_SIZE);
-            break;
-        }
+    case 'r': {
+        uint8_t frame[MULTI_PARAM_FRAME_SIZE];
+        build_multi_param_frame(frame, BRAND_MIDEA1, AC_POWER_ON, AC_MODE_COOL, 24, AC_FAN_AUTO);
+        Serial.println("[ir ] sending REFERENCE frame");
+        ir_module_send(frame, MULTI_PARAM_FRAME_SIZE);
+        break;
+    }
 
-        case 'a':
-            send_current("current state");
-            break;
+    case 'a':
+        send_current("current state");
+        break;
 
-        case 'p':
-            g_state.power = g_state.power ? AC_POWER_OFF : AC_POWER_ON;
-            send_current("power toggle");
-            break;
+    case 'p':
+        g_state.power = g_state.power ? AC_POWER_OFF : AC_POWER_ON;
+        send_current("power toggle");
+        break;
 
-        case 't':
-            ac_state_apply_field(g_state, "temp", v);
-            send_current("set temp");
-            break;
+    case 't':
+        ac_state_apply_field(g_state, "temp", v);
+        send_current("set temp");
+        break;
 
-        case 'm':
-            ac_state_apply_field(g_state, "mode", v);
-            send_current("set mode");
-            break;
+    case 'm':
+        ac_state_apply_field(g_state, "mode", v);
+        send_current("set mode");
+        break;
 
-        case 'f':
-            ac_state_apply_field(g_state, "fan", v);
-            send_current("set fan");
-            break;
+    case 'f':
+        ac_state_apply_field(g_state, "fan", v);
+        send_current("set fan");
+        break;
 
-        case 'b':
-            g_brand = (uint8_t)strtol(arg, nullptr, 16);
-            send_current("set brand");
-            break;
+    case 'b':
+        g_brand = (uint8_t)strtol(arg, nullptr, 16);
+        send_current("set brand");
+        break;
 
-        case 'l': {
-            uint8_t f[LEARN_FRAME_SIZE];
-            build_learn_frame(f, (uint8_t)v);
-            Serial.printf("[ir ] LEARN slot %d\n", v);
-            ir_module_send(f, LEARN_FRAME_SIZE);
-            break;
-        }
+    case 'l': {
+        uint8_t f[LEARN_FRAME_SIZE];
+        build_learn_frame(f, (uint8_t)v);
+        Serial.printf("[ir ] LEARN slot %d\n", v);
+        ir_module_send(f, LEARN_FRAME_SIZE);
+        break;
+    }
 
-        case 's': {
-            uint8_t f[LEARN_FRAME_SIZE];
-            build_send_learned_frame(f, (uint8_t)v);
-            Serial.printf("[ir ] REPLAY slot %d\n", v);
-            ir_module_send(f, LEARN_FRAME_SIZE);
-            break;
-        }
+    case 's': {
+        uint8_t f[LEARN_FRAME_SIZE];
+        build_send_learned_frame(f, (uint8_t)v);
+        Serial.printf("[ir ] REPLAY slot %d\n", v);
+        ir_module_send(f, LEARN_FRAME_SIZE);
+        break;
+    }
 
-        default:
-            Serial.printf("[cmd] unknown '%c' (type h for help)\n", cmd);
-            break;
+    default:
+        Serial.printf("[cmd] unknown '%c' (type h for help)\n", cmd);
+        break;
     }
 }
 
@@ -385,19 +388,17 @@ void setup() {
     Serial.println();
     Serial.println("==================================================");
     Serial.println("  AC GATEWAY  --  HARDWARE SELF TEST");
-    Serial.printf ("  chip  : %s rev%d  %d core(s) @ %d MHz\n",
-                   ESP.getChipModel(), ESP.getChipRevision(),
-                   ESP.getChipCores(), getCpuFrequencyMhz());
-    Serial.printf ("  flash : %u KB\n", (unsigned)(ESP.getFlashChipSize() / 1024));
-    Serial.printf ("  build : %s %s\n", __DATE__, __TIME__);
+    Serial.printf("  chip  : %s rev%d  %d core(s) @ %d MHz\n", ESP.getChipModel(),
+                  ESP.getChipRevision(), ESP.getChipCores(), getCpuFrequencyMhz());
+    Serial.printf("  flash : %u KB\n", (unsigned)(ESP.getFlashChipSize() / 1024));
+    Serial.printf("  build : %s %s\n", __DATE__, __TIME__);
 #if OLED_SH1106
     Serial.println("  OLED  : driver SH1106  (config.h OLED_SH1106=1)");
 #else
     Serial.println("  OLED  : driver SSD1306 (config.h OLED_SH1106=0)");
 #endif
-    Serial.printf ("  OLED  : I2C SDA=GPIO%d SCL=GPIO%d\n", PIN_OLED_SDA, PIN_OLED_SCL);
-    Serial.printf ("  IR    : UART RX=GPIO%d TX=GPIO%d @ %d 8N1\n",
-                   PIN_IR_RX, PIN_IR_TX, IR_BAUD);
+    Serial.printf("  OLED  : I2C SDA=GPIO%d SCL=GPIO%d\n", PIN_OLED_SDA, PIN_OLED_SCL);
+    Serial.printf("  IR    : UART RX=GPIO%d TX=GPIO%d @ %d 8N1\n", PIN_IR_RX, PIN_IR_TX, IR_BAUD);
     Serial.println("==================================================");
 
     i2c_scan();
@@ -438,18 +439,18 @@ void loop() {
                 g_len = 0;
             }
             Serial.print("selftest> ");
-        } else if (c == 8 || c == 127) {  // backspace
+        } else if (c == 8 || c == 127) { // backspace
             if (g_len > 0) {
                 --g_len;
                 Serial.print("\b \b");
             }
         } else if (c >= 0x20 && g_len < sizeof(g_line) - 1) {
             g_line[g_len++] = c;
-            Serial.write(c);  // local echo
+            Serial.write(c); // local echo
         }
     }
 
     delay(2);
 }
 
-#endif  // AC_SELFTEST
+#endif // AC_SELFTEST

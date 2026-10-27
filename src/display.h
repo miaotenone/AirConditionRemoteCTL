@@ -11,14 +11,14 @@ void display_lines(const char* l1, const char* l2, const char* l3, const char* l
 // where each field comes from (WiFi, MQTT, the DHT11, the fail-safe).
 struct DisplayInfo {
     AcState ac;
-    const char* net_state = "?";   // "OK" / "MQTT?" / "WiFi?"
-    const char* ip        = "";
-    bool   env_ok        = false;  // last DHT11 read succeeded
-    int    room_c        = 0;
-    int    humidity      = 0;
-    bool   service_alive = false;  // a recent <prefix>/hb arrived
-    bool   failsafe      = false;  // we turned the AC off because we lost them
-    uint32_t uptime_s    = 0;
+    const char* net_state = "?"; // "OK" / "MQTT?" / "WiFi?"
+    const char* ip = "";
+    bool env_ok = false; // last DHT11 read succeeded
+    int room_c = 0;
+    int humidity = 0;
+    bool service_alive = false; // a recent <prefix>/hb arrived
+    bool failsafe = false;      // we turned the AC off because we lost them
+    uint32_t uptime_s = 0;
 };
 
 // Hand the pager the current data. Cheap: it only stores and marks dirty.

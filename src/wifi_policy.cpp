@@ -1,9 +1,12 @@
 #include "wifi_policy.h"
 #include <string.h>
-#include <stdlib.h>   // strtol
+#include <stdlib.h> // strtol
 
 static void copy_trunc(char* dst, size_t dst_size, const char* src) {
-    if (!src) { dst[0] = '\0'; return; }
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
     strncpy(dst, src, dst_size - 1);
     dst[dst_size - 1] = '\0';
 }
@@ -22,14 +25,13 @@ WifiCred wifi_cred_after_portal(const char* portal_ssid, const char* portal_pass
 unsigned portal_seconds_left(unsigned long now_ms, unsigned long start_ms,
                              unsigned long timeout_s) {
     unsigned long total_ms = timeout_s * 1000UL;
-    unsigned long spent    = now_ms - start_ms;   // unsigned: wraps like millis()
+    unsigned long spent = now_ms - start_ms; // unsigned: wraps like millis()
     if (spent >= total_ms) return 0;
     // Ceiling division: the screen reads "1" throughout the final second.
     return (unsigned)((total_ms - spent + 999UL) / 1000UL);
 }
 
-bool portal_hard_timeout(unsigned long now_ms, unsigned long opened_ms,
-                         unsigned long cap_s) {
+bool portal_hard_timeout(unsigned long now_ms, unsigned long opened_ms, unsigned long cap_s) {
     return (now_ms - opened_ms) >= cap_s * 1000UL;
 }
 
@@ -54,11 +56,15 @@ unsigned char portal_brand_or(const char* text, unsigned char fallback) {
 
 void wifi_field_copy(char* dst, size_t dst_size, const char* src, size_t src_len) {
     if (!dst || dst_size == 0) return;
-    if (!src) { dst[0] = '\0'; return; }
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
 
     size_t n = 0;
     // Bounded by src_len, never by a terminator that may not be there.
-    while (n < src_len && n < dst_size - 1 && src[n] != '\0') ++n;
+    while (n < src_len && n < dst_size - 1 && src[n] != '\0')
+        ++n;
     memcpy(dst, src, n);
     dst[n] = '\0';
 }

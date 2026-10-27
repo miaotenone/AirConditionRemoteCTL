@@ -16,9 +16,9 @@ Import("env")  # noqa: F821 - provided by PlatformIO
 def _git(*args):
     """Run one git command in the project dir; "" when anything goes wrong."""
     try:
-        out = subprocess.check_output(("git",) + args,
-                                      cwd=env["PROJECT_DIR"],
-                                      stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(
+            ("git",) + args, cwd=env["PROJECT_DIR"], stderr=subprocess.DEVNULL
+        )
     except Exception:
         return ""
     return out.decode("utf-8", "replace").strip()

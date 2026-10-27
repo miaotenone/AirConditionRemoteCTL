@@ -6,28 +6,28 @@
 
 #include "link_guard.h"
 
-static WiFiClient   s_wifiClient;
+static WiFiClient s_wifiClient;
 static PubSubClient s_mqtt(s_wifiClient);
-static AppConfig    s_cfg;
+static AppConfig s_cfg;
 static AcCommandHandler s_handler = nullptr;
-static uint32_t     s_lastAttempt = 0;
-static String       s_topicCmd, s_topicState, s_topicStatus;
-static String       s_topicEnv, s_topicHb, s_topicEvent;
+static uint32_t s_lastAttempt = 0;
+static String s_topicCmd, s_topicState, s_topicStatus;
+static String s_topicEnv, s_topicHb, s_topicEvent;
 
 // Network watch-dog (config.h has the thresholds and the reasoning).
 // `s_lastHealthy` is the last time the WHOLE path was up -- WiFi associated AND
 // an MQTT session established. Both failure shapes move it: a station that lost
 // its association, and one the driver still reports as connected while nothing
 // gets through. Reading WiFi.status() alone would miss the second.
-static uint32_t s_lastHealthy   = 0;
-static uint32_t s_lastRedial    = 0;
+static uint32_t s_lastHealthy = 0;
+static uint32_t s_lastRedial = 0;
 static uint32_t s_linkDownSince = 0;
-static bool     s_linkWasUp     = false;
+static bool s_linkWasUp = false;
 
 // Last <prefix>/hb, and whether we have ever seen one. Both are written from
 // the MQTT callback and read from loop(), hence volatile.
-static volatile uint32_t s_lastHb   = 0;
-static volatile bool     s_hbSeen   = false;
+static volatile uint32_t s_lastHb = 0;
+static volatile bool s_hbSeen = false;
 
 // Which topic a message arrived on decides what it is. The old code only ever
 // subscribed to /cmd, so it could hand every payload to the command handler;
@@ -48,12 +48,12 @@ void net_set_command_handler(AcCommandHandler handler) {
 }
 
 static void build_topics(const AppConfig& cfg) {
-    s_topicCmd    = cfg.topic_prefix + "/cmd";
-    s_topicState  = cfg.topic_prefix + "/state";
+    s_topicCmd = cfg.topic_prefix + "/cmd";
+    s_topicState = cfg.topic_prefix + "/state";
     s_topicStatus = cfg.topic_prefix + "/status";
-    s_topicEnv    = cfg.topic_prefix + "/env";
-    s_topicHb     = cfg.topic_prefix + "/hb";
-    s_topicEvent  = cfg.topic_prefix + "/event";
+    s_topicEnv = cfg.topic_prefix + "/env";
+    s_topicHb = cfg.topic_prefix + "/hb";
+    s_topicEvent = cfg.topic_prefix + "/event";
 }
 
 // --- SNTP -----------------------------------------------------------------
@@ -71,7 +71,7 @@ static void maybe_start_ntp() {
 }
 
 bool net_time_synced() {
-    return time(nullptr) > 1600000000;   // sanity floor: ~Sep 2020
+    return time(nullptr) > 1600000000; // sanity floor: ~Sep 2020
 }
 
 bool net_service_alive() {
@@ -80,19 +80,17 @@ bool net_service_alive() {
 }
 
 static bool mqtt_connect() {
-    String clientId = s_cfg.device_name + "-" +
-                      String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFF), HEX);
+    String clientId =
+        s_cfg.device_name + "-" + String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFF), HEX);
     const char* user = s_cfg.mqtt_user.length() ? s_cfg.mqtt_user.c_str() : nullptr;
     const char* pass = s_cfg.mqtt_pass.length() ? s_cfg.mqtt_pass.c_str() : nullptr;
     const char* willMsg = "{\"online\":false}";
 
     bool ok;
     if (user) {
-        ok = s_mqtt.connect(clientId.c_str(), user, pass,
-                            s_topicStatus.c_str(), 1, true, willMsg);
+        ok = s_mqtt.connect(clientId.c_str(), user, pass, s_topicStatus.c_str(), 1, true, willMsg);
     } else {
-        ok = s_mqtt.connect(clientId.c_str(),
-                            s_topicStatus.c_str(), 1, true, willMsg);
+        ok = s_mqtt.connect(clientId.c_str(), s_topicStatus.c_str(), 1, true, willMsg);
     }
     if (ok) {
         Serial.println("[mqtt] connected");
@@ -119,7 +117,7 @@ static void wifi_redial() {
     if (s_cfg.wifi_ssid.length()) {
         WiFi.begin(s_cfg.wifi_ssid.c_str(), s_cfg.wifi_pass.c_str());
     }
-    s_lastAttempt = 0;   // let the MQTT dial that follows happen immediately
+    s_lastAttempt = 0; // let the MQTT dial that follows happen immediately
 }
 
 void net_begin(const AppConfig& cfg) {
@@ -142,10 +140,10 @@ void net_begin(const AppConfig& cfg) {
 
     // The watch-dog counts from here, not from boot: everything up to this call
     // was startup, which web_config already policed.
-    s_lastHealthy   = millis();
-    s_lastRedial    = 0;
+    s_lastHealthy = millis();
+    s_lastRedial = 0;
     s_linkDownSince = s_lastHealthy;
-    s_linkWasUp     = net_connected();
+    s_linkWasUp = net_connected();
 }
 
 bool net_connected() {
@@ -177,39 +175,43 @@ void net_loop() {
             s_linkWasUp = true;
         }
         s_lastHealthy = now;
-        s_lastRedial  = 0;   // a live session resets the escalation
+        s_lastRedial = 0; // a live session resets the escalation
         return;
     }
 
     if (s_linkWasUp) {
-        s_linkWasUp     = false;
+        s_linkWasUp = false;
         s_linkDownSince = now;
-        Serial.printf("[net] link lost (wifi=%d mqtt=%d)\n",
-                      (int)WiFi.status(), (int)s_mqtt.connected());
+        Serial.printf("[net] link lost (wifi=%d mqtt=%d)\n", (int)WiFi.status(),
+                      (int)s_mqtt.connected());
     }
 
     // Nothing provisioned to reach: the portal or the serial console owns that,
     // and re-dialling a network we have no credentials for helps nobody.
     if (!s_cfg.wifi_ssid.length() || !s_cfg.mqtt_host.length()) return;
 
-    LinkGuardInput in = { now, s_lastHealthy, s_lastRedial,
-                          NET_REDIAL_AFTER_MS, NET_REDIAL_EVERY_MS, NET_REBOOT_AFTER_MS };
+    LinkGuardInput in = {now,
+                         s_lastHealthy,
+                         s_lastRedial,
+                         NET_REDIAL_AFTER_MS,
+                         NET_REDIAL_EVERY_MS,
+                         NET_REBOOT_AFTER_MS};
     switch (link_guard_action(in)) {
-        case LINK_GUARD_REDIAL:
-            s_lastRedial = now;
-            wifi_redial();
-            break;
-        case LINK_GUARD_REBOOT:
-            // Last resort: state and credentials are in NVS, so a reboot costs
-            // a re-boot and buys a clean driver + a fresh join attempt.
-            Serial.printf("[net] link down %lus -> rebooting\n",
-                          (unsigned long)((now - s_lastHealthy) / 1000));
-            Serial.flush();
-            delay(50);
-            ESP.restart();
-            break;
-        default:
-            break;
+    case LINK_GUARD_REDIAL:
+        s_lastRedial = now;
+        wifi_redial();
+        break;
+    case LINK_GUARD_REBOOT:
+        // Last resort: state and credentials are in NVS, so a reboot costs
+        // a re-boot and buys a clean driver + a fresh join attempt.
+        Serial.printf("[net] link down %lus -> rebooting\n",
+                      (unsigned long)((now - s_lastHealthy) / 1000));
+        Serial.flush();
+        delay(50);
+        ESP.restart();
+        break;
+    default:
+        break;
     }
 }
 
@@ -218,11 +220,11 @@ void net_publish_state(const AppConfig& cfg, const AcState& state, bool online) 
 
     StaticJsonDocument<256> doc;
     doc["online"] = online;
-    doc["power"]  = state.power;
-    doc["mode"]   = state.mode;
-    doc["temp"]   = state.temp;
-    doc["fan"]    = state.fan;
-    doc["brand"]  = cfg.brand;
+    doc["power"] = state.power;
+    doc["mode"] = state.mode;
+    doc["temp"] = state.temp;
+    doc["fan"] = state.fan;
+    doc["brand"] = cfg.brand;
 
     char buf[160];
     size_t n = serializeJson(doc, buf, sizeof(buf));
@@ -234,9 +236,9 @@ void net_publish_env(const AppConfig& cfg, int temp_c, int humidity, bool ok) {
     if (!s_mqtt.connected()) return;
 
     StaticJsonDocument<128> doc;
-    doc["temp"]     = temp_c;
+    doc["temp"] = temp_c;
     doc["humidity"] = humidity;
-    doc["ok"]       = ok;
+    doc["ok"] = ok;
 
     char buf[96];
     size_t n = serializeJson(doc, buf, sizeof(buf));
@@ -259,12 +261,12 @@ bool net_publish_event(const AppConfig& cfg, const char* type, const AcState& pr
 
     StaticJsonDocument<256> doc;
     doc["type"] = type;
-    doc["ts"]   = (long)now;
+    doc["ts"] = (long)now;
     JsonObject p = doc.createNestedObject("prev");
     p["power"] = prev.power;
-    p["mode"]  = prev.mode;
-    p["temp"]  = prev.temp;
-    p["fan"]   = prev.fan;
+    p["mode"] = prev.mode;
+    p["temp"] = prev.temp;
+    p["fan"] = prev.fan;
 
     char buf[192];
     size_t n = serializeJson(doc, buf, sizeof(buf));
@@ -272,8 +274,8 @@ bool net_publish_event(const AppConfig& cfg, const char* type, const AcState& pr
     // copy outlives the moment and is replayed to every later subscriber as if
     // it were fresh -- and the service drops retained replays anyway, so keeping
     // one buys nothing and only plants a stale "fail-safe tripped" landmine.
-    bool sent = s_mqtt.publish(s_topicEvent.c_str(),
-                               reinterpret_cast<const uint8_t*>(buf), n, false);
+    bool sent =
+        s_mqtt.publish(s_topicEvent.c_str(), reinterpret_cast<const uint8_t*>(buf), n, false);
     Serial.printf("[mqtt] event %s %s\n", type, sent ? "published" : "FAILED");
     return sent;
 }

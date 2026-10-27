@@ -21,13 +21,13 @@ static uint8_t s_addr = OLED_I2C_ADDR;
 // ---------------------------------------------------------------------------
 static const uint8_t W = 128;
 static const uint8_t H = 64;
-static const uint8_t HEADER_H = 11;
+static const uint8_t HEADER_H = 12;
 
 //: How long each page stays put, and how the swap is animated. Six 40 ms
 //: frames = a ~240 ms slide, which reads as motion rather than a jump without
 //: costing any visible latency.
-#define DISPLAY_PAGE_MS    5000UL
-#define DISPLAY_FRAME_MS   40UL
+#define DISPLAY_PAGE_MS 5000UL
+#define DISPLAY_FRAME_MS 40UL
 #define DISPLAY_ANIM_FRAMES 6
 
 typedef void (*PageFn)(int16_t x);
@@ -37,19 +37,18 @@ static void page_link(int16_t x);
 static void page_fw(int16_t x);
 
 static const uint8_t PAGE_COUNT = 4;
-static PageFn s_pages[PAGE_COUNT] = { page_aircon, page_room, page_link,
-                                      page_fw };
+static PageFn s_pages[PAGE_COUNT] = {page_aircon, page_room, page_link, page_fw};
 
 static DisplayInfo s_info;
-static bool     s_ok          = false;  // an OLED answered the probe
-static uint8_t  s_page        = 0;
-static uint8_t  s_from        = 0;
-static uint8_t  s_anim        = 0;   // frames left in the current slide
-static bool     s_dirty       = true;
-static bool     s_manual      = true;  // display_lines() owns the screen
-static uint32_t s_fp          = 0;
-static uint32_t s_lastSwitch  = 0;
-static uint32_t s_lastFrame   = 0;
+static bool s_ok = false; // an OLED answered the probe
+static uint8_t s_page = 0;
+static uint8_t s_from = 0;
+static uint8_t s_anim = 0; // frames left in the current slide
+static bool s_dirty = true;
+static bool s_manual = true; // display_lines() owns the screen
+static uint32_t s_fp = 0;
+static uint32_t s_lastSwitch = 0;
+static uint32_t s_lastFrame = 0;
 
 //: Bound on a single I2C transaction. The default is unbounded enough that a
 //: half-connected module turns every frame into seconds of stalling.
@@ -68,19 +67,30 @@ static const char* fan_name(uint8_t f) {
     return (f <= AC_FAN_HIGH) ? t[f] : "?";
 }
 
-// An inverted title bar: a filled box with knocked-out text. Drawn at an x
-// offset so the same page can slide in/out.
+// A common chrome keeps status and navigation in the same place on every page.
+// Protection takes priority over the connection badge, never over control logic.
 static void header(int16_t x, const char* title, uint8_t page) {
     u8g2.setDrawColor(1);
     u8g2.drawBox(x, 0, W, HEADER_H);
     u8g2.setDrawColor(0);
-    u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(x + 3, HEADER_H - 2, title);
-
-    char right[8];
-    snprintf(right, sizeof(right), "%u/%u", (unsigned)page, (unsigned)PAGE_COUNT);
-    u8g2.drawStr(x + W - 3 - (int16_t)u8g2.getStrWidth(right), HEADER_H - 2, right);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(x + 4, 9, title);
+    const char* badge = s_info.failsafe ? "SAFE OFF" : s_info.service_alive ? "SVC OK" : "NO HB";
+    u8g2.drawStr(x + W - 4 - (int16_t)u8g2.getStrWidth(badge), 9, badge);
     u8g2.setDrawColor(1);
+    u8g2.drawHLine(x + 4, 54, W - 8);
+    for (uint8_t dot = 0; dot < PAGE_COUNT; ++dot) {
+        const int16_t dx = x + 102 + dot * 7;
+        if (dot + 1 == page)
+            u8g2.drawBox(dx, 59, 4, 3);
+        else
+            u8g2.drawFrame(dx, 59, 4, 3);
+    }
+}
+
+static void footer(int16_t x, const char* text) {
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(x + 4, 63, text);
 }
 
 // A big number followed by a "deg C" suffix. Returns nothing; kept here so
@@ -100,11 +110,13 @@ static void big_celsius(int16_t x, int16_t bx, int16_t baseline, int value) {
 
 // The sensor failed: say so in plain words instead of showing a stale number.
 static void no_sensor(int16_t x) {
+    u8g2.drawRFrame(x + 6, 19, 23, 27, 4);
     u8g2.setFont(u8g2_font_7x14B_tf);
-    u8g2.drawStr(x + 8, 40, "no signal");
-
-    u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(x + 8, 58, "DHT11 read failed");
+    u8g2.drawStr(x + 14, 38, "!");
+    u8g2.drawStr(x + 36, 33, "NO DATA");
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(x + 36, 46, "CHECK SENSOR");
+    footer(x, "DHT11 READ FAILED");
 }
 
 // ---------------------------------------------------------------------------
@@ -112,23 +124,27 @@ static void no_sensor(int16_t x) {
 // ---------------------------------------------------------------------------
 static void page_aircon(int16_t x) {
     header(x, "AIRCON", 1);
-    big_celsius(x, 8, 44, (int)s_info.ac.temp);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(x + 6, 22, "SETPOINT");
+    big_celsius(x, 6, 49, (int)s_info.ac.temp);
 
     bool on = s_info.ac.power != AC_POWER_OFF;
-    u8g2.drawRFrame(x + 84, 20, 38, 26, 6);
+    if (on) {
+        u8g2.drawRBox(x + 84, 18, 38, 22, 4);
+        u8g2.setDrawColor(0);
+    } else {
+        u8g2.drawRFrame(x + 84, 18, 38, 22, 4);
+    }
     u8g2.setFont(u8g2_font_7x14B_tf);
     const char* pw = on ? "ON" : "OFF";
-    u8g2.drawStr(x + 84 + (38 - (int16_t)u8g2.getStrWidth(pw)) / 2, 39, pw);
-
-    u8g2.drawHLine(x + 4, 48, W - 8);
-
-    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(x + 84 + (38 - (int16_t)u8g2.getStrWidth(pw)) / 2, 34, pw);
+    u8g2.setDrawColor(1);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    const char* mode = mode_name(s_info.ac.mode);
+    u8g2.drawStr(x + 103 - (int16_t)u8g2.getStrWidth(mode) / 2, 50, mode);
     char row[26];
-    snprintf(row, sizeof(row), "MODE %s", mode_name(s_info.ac.mode));
-    u8g2.drawStr(x + 4, 60, row);
-
     snprintf(row, sizeof(row), "FAN %s", fan_name(s_info.ac.fan));
-    u8g2.drawStr(x + W - 4 - (int16_t)u8g2.getStrWidth(row), 60, row);
+    footer(x, row);
 }
 
 static void page_room(int16_t x) {
@@ -139,60 +155,53 @@ static void page_room(int16_t x) {
         return;
     }
 
-    big_celsius(x, 8, 44, s_info.room_c);
-
-    u8g2.setFont(u8g2_font_6x12_tf);
-    u8g2.drawStr(x + 96, 26, "RH");
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(x + 6, 22, "ROOM TEMP");
+    big_celsius(x, 6, 49, s_info.room_c);
+    u8g2.drawVLine(x + 79, 18, 32);
+    u8g2.drawStr(x + 87, 23, "RH");
     u8g2.setFont(u8g2_font_7x14B_tf);
     char rh[8];
     snprintf(rh, sizeof(rh), "%d%%", s_info.humidity);
-    u8g2.drawStr(x + 86, 42, rh);
-
-    u8g2.drawHLine(x + 4, 48, W - 8);
-
-    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(x + 85, 40, rh);
+    // This is a humidity gauge, not an invented comfort classification.
+    const int humidity = s_info.humidity < 0 ? 0 : s_info.humidity > 100 ? 100 : s_info.humidity;
+    u8g2.drawFrame(x + 85, 46, 36, 4);
+    u8g2.drawBox(x + 86, 47, (uint8_t)(34 * humidity / 100), 2);
     char row[28];
     if (s_info.ac.power != AC_POWER_OFF) {
         // The useful question is "how far from the setpoint am I".
-        snprintf(row, sizeof(row), "SET %u  d%+d",
-                 (unsigned)s_info.ac.temp, s_info.room_c - (int)s_info.ac.temp);
+        snprintf(row, sizeof(row), "SET %u  d%+d", (unsigned)s_info.ac.temp,
+                 s_info.room_c - (int)s_info.ac.temp);
     } else {
         snprintf(row, sizeof(row), "SET %u   --", (unsigned)s_info.ac.temp);
     }
-    u8g2.drawStr(x + 4, 60, row);
+    footer(x, row);
 }
 
 static void page_link(int16_t x) {
     header(x, "LINK", 3);
 
-    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.setFont(u8g2_font_5x7_tf);
     char row[32];
 
-    snprintf(row, sizeof(row), "WiFi/MQTT %s", s_info.net_state);
-    u8g2.drawStr(x + 4, 22, row);
+    snprintf(row, sizeof(row), "NETWORK  %s", s_info.net_state ? s_info.net_state : "?");
+    u8g2.drawStr(x + 4, 23, row);
 
-    const char* ip = (s_info.ip && s_info.ip[0] && strcmp(s_info.ip, "0.0.0.0") != 0)
-                     ? s_info.ip : "no IP";
+    const char* ip =
+        (s_info.ip && s_info.ip[0] && strcmp(s_info.ip, "0.0.0.0") != 0) ? s_info.ip : "no IP";
     snprintf(row, sizeof(row), "IP %s", ip);
     u8g2.drawStr(x + 4, 35, row);
 
     // The heartbeat is the interesting one: WiFi can be fine while the bot
     // service that makes the decisions is gone.
-    snprintf(row, sizeof(row), "SVC HB %s", s_info.service_alive ? "OK" : "LOST");
+    snprintf(row, sizeof(row), "HEARTBEAT %s", s_info.service_alive ? "OK" : "LOST");
     u8g2.drawStr(x + 4, 48, row);
 
     uint32_t s = s_info.uptime_s;
-    snprintf(row, sizeof(row), "up %lud %02lu:%02lu",
-             (unsigned long)(s / 86400UL),
-             (unsigned long)((s / 3600UL) % 24UL),
-             (unsigned long)((s / 60UL) % 60UL));
-    u8g2.drawStr(x + 4, 60, row);
-
-    if (s_info.failsafe) {
-        u8g2.setFont(u8g2_font_5x7_tf);
-        const char* m = "FAILSAFE";
-        u8g2.drawStr(x + W - 4 - (int16_t)u8g2.getStrWidth(m), 60, m);
-    }
+    snprintf(row, sizeof(row), "up %lud %02lu:%02lu", (unsigned long)(s / 86400UL),
+             (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
+    footer(x, row);
 }
 
 // Which build is this? The one question the unit otherwise cannot answer: the
@@ -200,21 +209,19 @@ static void page_link(int16_t x) {
 // names the firmware. Values come from version.h (git revision injected at build
 // time), so a reflashed board is identifiable by looking at it -- no cable.
 static void page_fw(int16_t x) {
-    u8g2.setFont(u8g2_font_6x12_tf);
-
-    char title[16];
-    snprintf(title, sizeof(title), "FW %s", FW_TAG);
-    header(x, title, 4);
+    header(x, "FIRMWARE", 4);
+    u8g2.setFont(u8g2_font_5x7_tf);
 
     char row[32];
-    snprintf(row, sizeof(row), "%s", FW_GIT_HASH);
-    u8g2.drawStr(x + 4, 24, row);
+    snprintf(row, sizeof(row), "%s / OLED UI2", FW_TAG);
+    u8g2.drawStr(x + 4, 23, row);
+    u8g2.drawStr(x + 4, 35, FW_GIT_HASH);
 
     snprintf(row, sizeof(row), "built %s", __DATE__);
-    u8g2.drawStr(x + 4, 38, row);
+    u8g2.drawStr(x + 4, 48, row);
 
     snprintf(row, sizeof(row), "%s", __TIME__);
-    u8g2.drawStr(x + 4, 52, row);
+    footer(x, row);
 }
 
 // ---------------------------------------------------------------------------
@@ -235,9 +242,11 @@ static uint32_t fingerprint(const DisplayInfo& i) {
     mix_hash(h, (uint32_t)i.humidity);
     mix_hash(h, i.service_alive ? 1u : 0u);
     mix_hash(h, i.failsafe ? 1u : 0u);
-    mix_hash(h, i.uptime_s / 60u);   // minute resolution: no 1 Hz churn
-    for (const char* p = i.net_state; p && *p; ++p) mix_hash(h, (uint8_t)*p);
-    for (const char* p = i.ip; p && *p; ++p) mix_hash(h, (uint8_t)*p);
+    mix_hash(h, i.uptime_s / 60u); // minute resolution: no 1 Hz churn
+    for (const char* p = i.net_state; p && *p; ++p)
+        mix_hash(h, (uint8_t)*p);
+    for (const char* p = i.ip; p && *p; ++p)
+        mix_hash(h, (uint8_t)*p);
     return h;
 }
 
@@ -257,7 +266,7 @@ static void i2c_bus_recover() {
     pinMode(PIN_OLED_SCL, INPUT_PULLUP);
     delayMicroseconds(20);
     if (digitalRead(PIN_OLED_SDA) == HIGH && digitalRead(PIN_OLED_SCL) == HIGH) {
-        return;                                        // idle, leave it be
+        return; // idle, leave it be
     }
 
     pinMode(PIN_OLED_SCL, OUTPUT_OPEN_DRAIN);
@@ -309,14 +318,14 @@ void display_begin() {
     }
     Serial.printf("[oled] using 0x%02X\n", s_addr);
 
-    u8g2.setI2CAddress(s_addr << 1);  // U8g2 wants the 8-bit address
+    u8g2.setI2CAddress(s_addr << 1); // U8g2 wants the 8-bit address
     u8g2.begin();
     u8g2.setFont(u8g2_font_6x12_tf);
     u8g2.clearBuffer();
     u8g2.drawStr(0, 12, "AC Gateway booting");
     u8g2.sendBuffer();
 
-    s_ok         = true;
+    s_ok = true;
     s_lastSwitch = millis();
 }
 
@@ -326,32 +335,48 @@ void display_lines(const char* l1, const char* l2, const char* l3, const char* l
     // Manual mode: boot chatter and the self-test own the screen until the
     // pager is handed data again.
     s_manual = true;
-    u8g2.setFont(u8g2_font_6x12_tf);
     u8g2.clearBuffer();
-    u8g2.drawStr(0, 12, l1);
-    u8g2.drawStr(0, 28, l2);
-    u8g2.drawStr(0, 44, l3);
-    u8g2.drawStr(0, 60, l4);
+    u8g2.drawBox(0, 0, W, HEADER_H);
+    u8g2.setDrawColor(0);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(4, 9, l1);
+    u8g2.setDrawColor(1);
+    u8g2.setFont(u8g2_font_6x12_tf);
+    u8g2.drawStr(4, 29, l2);
+    u8g2.drawHLine(4, 35, W - 8);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(4, 47, l3);
+    u8g2.drawStr(4, 60, l4);
     u8g2.sendBuffer();
 }
 
 void display_show_ac(const AcState& s, const char* net_state, const char* ip) {
     DisplayInfo info;
-    info.ac        = s;
+    info.ac = s;
     info.net_state = net_state;
-    info.ip        = ip;
+    info.ip = ip;
     display_show_info(info);
 }
 
 void display_show_info(const DisplayInfo& info) {
-    s_info   = info;
+    s_info = info;
     s_manual = false;
 
     uint32_t fp = fingerprint(info);
     if (fp != s_fp) {
-        s_fp    = fp;
+        s_fp = fp;
         s_dirty = true;
     }
+}
+
+// Prevent outgoing footer text or decorations bleeding into the incoming page.
+static void render_page(uint8_t page, int16_t x) {
+    const int16_t left = x < 0 ? 0 : x;
+    const int16_t right = x + W > W ? W : x + W;
+    if (left >= right) return;
+    u8g2.setClipWindow(left, 0, right, H);
+    s_pages[page](x);
+    u8g2.setMaxClipWindow();
 }
 
 void display_tick() {
@@ -361,10 +386,10 @@ void display_tick() {
 
     // Time to move on?
     if (s_anim == 0 && (uint32_t)(now - s_lastSwitch) >= DISPLAY_PAGE_MS) {
-        s_from       = s_page;
-        s_page       = (uint8_t)((s_page + 1) % PAGE_COUNT);
+        s_from = s_page;
+        s_page = (uint8_t)((s_page + 1) % PAGE_COUNT);
         s_lastSwitch = now;
-        s_anim       = DISPLAY_ANIM_FRAMES;
+        s_anim = DISPLAY_ANIM_FRAMES;
     }
 
     if (s_anim == 0 && !s_dirty) return;
@@ -374,11 +399,11 @@ void display_tick() {
     if (s_anim > 0) {
         s_anim--;
         uint16_t done = (uint16_t)(DISPLAY_ANIM_FRAMES - s_anim);
-        int16_t  off  = (int16_t)((uint32_t)done * W / DISPLAY_ANIM_FRAMES);
+        int16_t off = (int16_t)((uint32_t)done * W / DISPLAY_ANIM_FRAMES);
 
         u8g2.clearBuffer();
-        s_pages[s_from]((int16_t)(-off));          // slides out to the left
-        s_pages[s_page]((int16_t)(W - off));       // and the new one follows
+        render_page(s_from, (int16_t)(-off));
+        render_page(s_page, (int16_t)(W - off));
         u8g2.sendBuffer();
         if (s_anim == 0) s_dirty = false;
         return;
@@ -386,7 +411,7 @@ void display_tick() {
 
     s_dirty = false;
     u8g2.clearBuffer();
-    s_pages[s_page](0);
+    render_page(s_page, 0);
     u8g2.sendBuffer();
 }
 

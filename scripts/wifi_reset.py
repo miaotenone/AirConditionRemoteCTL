@@ -8,11 +8,11 @@ next boot opens a clean config portal. Use this when the saved network is
 gone (or the password changed) and the portal never opens, e.g. the serial
 log keeps showing 4WAY_HANDSHAKE_TIMEOUT.
 """
+
 import sys
 import time
 
 import serial
-
 from _port import resolve_port
 
 
@@ -28,7 +28,7 @@ def main():
     s.open()
     s.dtr = False
     s.rts = False
-    s.rts = True                      # reset the board
+    s.rts = True  # reset the board
     time.sleep(0.12)
     s.rts = False
 

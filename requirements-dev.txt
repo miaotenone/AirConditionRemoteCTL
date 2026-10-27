@@ -1,0 +1,5 @@
+# Tested together; upgrade deliberately with the full quality gate and both builds.
+platformio==6.2.0
+pyserial==3.5
+ruff==0.14.3
+clang-format==20.1.8

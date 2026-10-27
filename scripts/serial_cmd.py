@@ -15,12 +15,12 @@ Resets the board first so the boot banner is included; the 2 s boot-time 'r'
 escape window is waited out before any command is sent. Use --no-reset to
 talk to a board that is already running.
 """
+
 import argparse
 import sys
 import time
 
 import serial
-
 from _port import resolve_port
 
 
@@ -59,7 +59,7 @@ def main():
         ser.rts = True
         time.sleep(0.12)
         ser.rts = False
-        sys.stdout.write(read_for(ser, 5.0))   # banner + boot 'r' window
+        sys.stdout.write(read_for(ser, 5.0))  # banner + boot 'r' window
 
     for c in args.cmds:
         ser.write((c + "\n").encode())

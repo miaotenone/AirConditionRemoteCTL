@@ -1,0 +1,11 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+include = ["scripts/**/*.py", "tests/python/**/*.py"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/git_version.py" = ["F821"] # Import/env are injected by PlatformIO/SCons.
+"scripts/hw_selftest.py" = ["E402"] # Helpful pyserial import failure before local imports.

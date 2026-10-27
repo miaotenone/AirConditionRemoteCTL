@@ -6,7 +6,8 @@
 // the time it matters. A wrong or too-long name there is worse than no name, so
 // both the mapping and the on-screen width are pinned here.
 //
-//   g++ -std=c++17 -I src tests/native/reset_info_test.cpp src/reset_info.cpp -o build/reset_info_test
+//   g++ -std=c++17 -I src tests/native/reset_info_test.cpp src/reset_info.cpp -o
+//   build/reset_info_test
 #include <cstdio>
 #include <cstring>
 
@@ -15,7 +16,10 @@
 static int g_failures = 0;
 
 static void expect(const char* name, bool cond) {
-    if (cond) { printf("PASS %s\n", name); return; }
+    if (cond) {
+        printf("PASS %s\n", name);
+        return;
+    }
     printf("FAIL %s\n", name);
     ++g_failures;
 }
@@ -50,7 +54,10 @@ int main() {
     }
     expect("every name fits 'rst <name>'", all_short);
 
-    if (g_failures) { printf("%d test(s) FAILED\n", g_failures); return 1; }
+    if (g_failures) {
+        printf("%d test(s) FAILED\n", g_failures);
+        return 1;
+    }
     printf("all reset_info tests passed\n");
     return 0;
 }

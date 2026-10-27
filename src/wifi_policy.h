@@ -27,15 +27,13 @@ WifiCred wifi_cred_after_portal(const char* portal_ssid, const char* portal_pass
 // now_ms / start_ms are millis() readings; the subtraction is unsigned so it
 // survives the ~49-day millis() wrap. Rounds up, so the screen shows "1" for
 // the whole final second instead of "0" while the portal is still usable.
-unsigned portal_seconds_left(unsigned long now_ms, unsigned long start_ms,
-                             unsigned long timeout_s);
+unsigned portal_seconds_left(unsigned long now_ms, unsigned long start_ms, unsigned long timeout_s);
 
 // Absolute deadline for the config portal, measured from the first time it
 // opened. The slider above restarts whenever a client is associated, so on its
 // own it lets a phone someone walked away from pin the device in the portal
 // forever -- no MQTT, no AC control. This ceiling never restarts.
-bool portal_hard_timeout(unsigned long now_ms, unsigned long opened_ms,
-                         unsigned long cap_s);
+bool portal_hard_timeout(unsigned long now_ms, unsigned long opened_ms, unsigned long cap_s);
 
 // Port number typed into the portal. "" / unparsable / out of range / trailing
 // junk keep the previous value rather than persisting a broken-looking setting.

@@ -19,6 +19,7 @@ USB serial device (CH340 / CP210x / FTDI), i.e. an ``hwid`` containing
 ``USB`` -- never as a ``BTHENUM`` device, which is what makes the filter
 safe on a laptop with several phantom Bluetooth COM ports.
 """
+
 import os
 import sys
 

@@ -1,8 +1,8 @@
 # 树莓派 + 飞书服务 · 接口规格（定稿 v1）
 
-> 📌 **本文件是镜像**：原文是服务端仓库 `AirConditionRemoteServer/docs/interface-spec.md`，
-> 逐字节复制到这里（固件是契约的另一半，手上得有）。**改契约请先改服务端、再复制过来**，
-> 不要在本仓库里单独改。镜像时间：**2026-10-16**（2026-10-16 补：设备的即时回执、状态存 NVS、QoS 实情）。
+> 本文件源自服务端仓库 `AirConditionRemoteServer/docs/interface-spec.md`，保留服务端历史设计背景。
+> 2026-10-27 按两端实现校正 §4 的投递/时间语义和本地链接，不改变协议或控制策略，因而不再声称逐字节镜像。
+> 服务端文件路径均明确标注为跨仓库引用；本仓库不附带服务部署文件。以后变更契约须协调两端回归。
 
 > 本文件是**服务端仓库**（`AirConditionRemoteServer`，树莓派侧服务）的设计与接口契约。
 > 它和 ESP32 固件仓库 `AirConditionRemoteCTL` 的共同边界只有一件事：**MQTT 契约**。
@@ -11,9 +11,9 @@
 日期：2026-10-12
 状态：**定稿 v1**（决策记录见 §12）
 上游仓库：`AirConditionRemoteCTL`（ESP32 固件，已完成）
-本仓库：`AirConditionRemoteServer`（树莓派 + 飞书服务；**MQTT 链路已验证**，服务本体未开工）
+设计原文所指仓库：`AirConditionRemoteServer`（树莓派 + 飞书服务；以下上线记录属于历史记录）
 当前状态（2026-10-15）：v1 **已上线并在真机使用**；v1.2（预设 / 天气 / DHT11 夜间闭环 / 失联保护）也已上线，
-遗留与缺口见 [`../README.md`](../README.md) 与设计文档 §18.12。**本文以下仍是 v1 的规格原文**，
+遗留与缺口见服务端仓库的 `README.md` 与设计文档 §18.12。**以下保留 v1 规格背景，§4 按实现核对**，
 v1.1/v1.2 的增补就地标在对应位置。
 
 ---
@@ -62,7 +62,7 @@ v1.1/v1.2 的增补就地标在对应位置。
 1. **飞书通道**：进 = 卡片按钮回调（长连接）；出 = 发送/更新卡片。
 2. **MQTT 通道**：进 = `ac/state`、`ac/status`（retained）；出 = `ac/cmd`。
 
-服务是**无状态中转 + 本地状态缓存**，真值（source of truth）在 ESP32 的 `ac/state`。
+服务维护本地状态缓存，以 ESP32 的 `ac/state` 作为网关影子状态依据；它不是空调物理状态或当前在线的证明。
 
 ---
 
@@ -88,31 +88,31 @@ v1.1/v1.2 的增补就地标在对应位置。
 
 ### 4.1 Topics
 
-| Topic | 方向（相对本服务） | QoS | Retained | Payload |
+发布 QoS、订阅请求 QoS 与最终交付 QoS 不同；交付不高于双方支持的等级。不能概括为“全部 QoS1”或“全部 QoS0”。
+
+| Topic | 发布 QoS | 订阅请求 QoS | Retained | Payload |
 |---|---|---|---|---|
-| `{prefix}/cmd` | 发布 | 1 | 否 | 只含要改字段的 JSON |
-| `{prefix}/state` | 订阅 | 1 | **是** | 完整状态 JSON |
-| `{prefix}/status` | 订阅 | 1 | **是** | 在线/离线 JSON（LWT） |
-| `{prefix}/env` | 订阅 | 1 | **是** | DHT11 读数 `{temp,humidity,ok}` |
-| `{prefix}/hb` | 发布 | 0 | 否 | 服务心跳 `{ts}`（证明"决策者活着"）|
-| `{prefix}/event` | 订阅 | 1 | **是** | 设备事件 `{type,ts,prev}` |
+| `{prefix}/cmd` | 服务 1 | 固件 0 | 否 | 只含要改字段的 JSON |
+| `{prefix}/hb` | 服务 0 | 固件 0 | 否 | 服务心跳 `{ts}` |
+| `{prefix}/state` | 固件 0 | 服务 1 | 是 | 完整影子状态 |
+| `{prefix}/status` 正常上线 | 固件 0 | 服务 1 | 是 | `{"online":true}` |
+| `{prefix}/status` 离线遗嘱 | broker 按固件设置的 1 发布 | 服务 1 | 是 | `{"online":false}` |
+| `{prefix}/env` | 固件 0 | 服务 1 | 是 | DHT11 `{temp,humidity,ok}` |
+| `{prefix}/event` | 固件 0 | 服务 1 | 否 | `{type,ts,prev}` |
 
 `prefix` 默认 `ac`，由固件配网页设定，两边必须一致。
 
-> ⚠️ **上表的 QoS 是设计意图，线上实际是 QoS0**（2026-10-15 核对）：ESP32 侧用的是 **PubSubClient**，
-> 它的 `publish()` 第三个参数是 `retained`、**没有 QoS 参数**（只能 QoS0），`subscribe()` 同理。
-> **`Retained` 那一列是真的**（固件都传了 `true`）——retained + 固件每 30s 重发 `state`，才是实际兜底的东西。
-> 所以：**不要依赖 QoS1 的投递保证**（掉一条 `ac/state`，服务端到 `CONFIRM_TIMEOUT_S` 就会显示「⚠️ 未确认」）。
-> 要真 QoS1 得换客户端库（**不打算换**）；契约这一栏已按实情写。设计文档 §18.12.4。
-> 正常点击踩不到：固件对每条能识别的命令都**立刻**回一次 `ac/state`（§4.2）。
+`cmd` 的服务端发布 QoS1 不代表设备端执行确认。固件订阅 QoS0；服务仅在收到的状态与当前预测状态一致时清除待确认标记。
+这是网关影子状态匹配，不是空调实际执行的物理确认。PubSubClient 发布成功也不等于应用处理成功。
+状态定时重发有助于最终更新显示，但不能补执行一条已经丢失的控制命令。
 
 > **为什么还要 `hb`**：Mosquitto 跑在树莓派上但**是独立的 systemd 单元**，
 > 所以「MQTT 连上了」并不等于「发命令的那个服务活着」。`hb` 是设备唯一能
 > 拿到的、关于**决策者**在不在的证据（设计 18.8）。
 >
-> **`env` / `event` 是 retained 的陷阱**：broker 会把 retained 消息重放给
-> 新订阅者。服务必须只看**非 retained** 的新消息（重放的是历史，不是读数），
-> 且 `event` 只认 `ts` 在 10 分钟以内的（设计 18.6）。
+> `env` 是 retained，但服务拒绝 retained 重放，避免把旧读数当新样点。`event` 不 retained；
+> 服务仍拒绝 retained event 是兼容旧固件或 broker 残留，不能据此反推当前事件是 retained。
+> **`cmd/hb/event` 均不得改为 retained。**
 
 ### 4.2 Payload 定义
 
@@ -177,11 +177,12 @@ v1.1/v1.2 的增补就地标在对应位置。
 { "type": "failsafe_off", "ts": 1792078200, "prev": {"power":1,"mode":1,"temp":24,"fan":0} }
 ```
 
-- 目前只有 `failsafe_off`：设备连续失联 5 分钟后自行关机（见固件仓库设计）。
-- 服务收到 `ts` 在 10 分钟内的事件才动作（并仍然忽略 retained 重放，兼容旧固件）；恢复策略要求
-  `prev.power == 1`（本来就关机就不必再开）。
+- 目前只有 `failsafe_off`；关机与恢复边界见 §4.4。恢复策略要求 `prev.power == 1`（本来就关机就不必再开）。
+- 事件 `ts` 是本次发布时生成的 Unix 秒，不是失联关机发生时刻。服务拒绝缺失、非数字或低于可用时间下限的 `ts`，
+  并拒绝按服务墙钟计算年龄大于 600 秒的事件；当前实现没有未来时间戳上限。
 
-> 固件每 30s 心跳重发 `ac/state`。服务可用"最后一条 `ac/state` 的到达时间"判断数据新鲜度，超时（如 >90s）但 `status.online=true` 时提示"状态可能过期"。
+> 固件每 30s 重发 `ac/state`。retained state 是设备影子缓存，不是当前在线证明；现服务会把其接收时刻
+> 作为状态更新时间并可能标在线，不能将其解释成真实采样时间。
 
 ### 4.3 时序（一次点击）
 
@@ -189,11 +190,23 @@ v1.1/v1.2 的增补就地标在对应位置。
 用户点"制冷" 
   → 飞书长连接回调 action.value={"a":"mode","v":1}
   → 服务 3s 内先回一张"乐观更新"的卡片（避免超时）
-  → 服务发布 ac/cmd {"mode":1}（QoS0，见 §4.1），并起跳 5s 确认计时
-  → ESP32 发红外帧 → 更新自身状态（并存 NVS）
+  → 服务发布 ac/cmd {"mode":1}（发布 QoS1 / 固件订阅 QoS0，见 §4.1），并起跳 5s 确认计时
+  → ESP32 更新影子状态 → 存 NVS → 发红外帧
   → ESP32 立刻回 ac/state (retained)      ← 确认窗口只等这一条
-  → 服务收到，用真值刷新卡片（去掉"待确认"标记）
+  → 服务收到，刷新影子状态；与当前预测匹配才去掉"待确认"标记
 ```
+
+### 4.4 时间与恢复边界（既有实现）
+
+- 心跳默认每 30 秒发送。设备用 `millis()` 记录到达时间，不使用心跳 payload 的 `ts` 判活。
+- 首次健康联系后才武装保护：WiFi/MQTT 持续断开时，距最后健康联系约 300 秒关机；仅心跳中断而 MQTT 仍在线时，
+  从最后一次心跳起约 90 + 300 = 390 秒关机，另有主循环执行延迟。
+- 自动恢复是尽力而为，不是保证。未同步可信时钟时不发送事件；待报事件在 RAM，网络 watchdog 重启会丢失它。
+  关机状态已存 NVS；重启从 NVS 恢复关机影子，启动本身不发开机红外，也不通过自动开机弥补恢复事件丢失。
+- 恢复消息缺少与用户操作之间的顺序标识，可能覆盖恢复前后新提交的用户命令；不得声称“最新用户意图总是优先”。
+- 服务心跳调度依赖墙钟，系统时间回拨可能延后发送；设备判活使用单调时间。部署时应维持正常校时。
+
+上述是兼容边界，不是本次规范化新增策略。修复优先级、时间语义或在线判定应单独设计回归与兼容方案。
 
 ---
 
@@ -466,7 +479,7 @@ class Presence:
 
 ## 8. 部署
 
-本仓库的 [`deploy/mosquitto-ac.conf`](../deploy/mosquitto-ac.conf) 是**已在树莓派上验证通过**的版本：
+服务端仓库的 `AirConditionRemoteServer/deploy/mosquitto-ac.conf` 是历史上在树莓派验证的版本（不随本仓库分发）：
 
 ```ini
 # /etc/mosquitto/conf.d/ac.conf
@@ -499,11 +512,11 @@ WantedBy=multi-user.target
 ```
 
 > 上面是 2026-10-12 的设计草案。**真正下发到树莓派的是
-> [`deploy/ac-bot.service`](../deploy/ac-bot.service)**：`User=dirj`（这台机器上没有 `pi` 用户）、
+> 服务端仓库的 `AirConditionRemoteServer/deploy/ac-bot.service`**：`User=dirj`（这台机器上没有 `pi` 用户）、
 > 多了 `StateDirectory=ac-bot` / `Environment=DB_PATH=/var/lib/ac-bot/ac-bot.sqlite3`，
 > 以及 `NoNewPrivileges` / `PrivateTmp` / `Nice` 三条加固。检出位置
 > **`~/project/AirConditionRemoteServer`**（2026-10-15 从 `/opt/ac-bot` 迁入，
-> 见 [`feishu-bringup.md`](feishu-bringup.md) §2）。
+> 见服务端仓库的 `AirConditionRemoteServer/docs/feishu-bringup.md` §2）。
 
 ---
 
@@ -600,7 +613,7 @@ AirConditionRemoteServer/
 6. **文本控制**（v1.1）：私聊里发中文短句与点卡片**等价**（解析成同样的 `(action, value)`，进同一个队列），
    规则解析、**不接 LLM**；形容词句（`太热了`）只给建议、**永不执行**；去重以 `message_id` 为准；
    可用 `TEXT_CONTROL_ENABLED=false` 整体关掉。完整设计与 14 条决策见
-   [`superpowers/specs/2026-10-13-feishu-text-control-design.md`](superpowers/specs/2026-10-13-feishu-text-control-design.md) §10。
+   服务端仓库的 `AirConditionRemoteServer/docs/superpowers/specs/2026-10-13-feishu-text-control-design.md` §10（本仓不附带此设计）。
 
 ### 待确认（不阻塞 v1 开工）
 

@@ -8,18 +8,18 @@
 // 1.3" modules are usually SH1106; 0.96" are usually SSD1306.
 // Set to 1 for SH1106, 0 to use SSD1306.
 #define OLED_SH1106 1
-#define OLED_I2C_ADDR 0x3C  // fall back to 0x3D is auto-detected at boot
+#define OLED_I2C_ADDR 0x3C // fall back to 0x3D is auto-detected at boot
 
 // ---- WiFiManager config portal ----
 #define WIFI_PORTAL_AP_NAME "AC-Gateway-Setup"
-#define WIFI_PORTAL_AP_PASS "acgateway"   // must be >= 8 chars
+#define WIFI_PORTAL_AP_PASS "acgateway" // must be >= 8 chars
 #define WIFI_PORTAL_TIMEOUT_S 180
 // Absolute cap on one portal visit, measured from when it opened. The idle
 // timeout above restarts while a phone is associated with the setup AP, so on
 // its own it would let a phone someone walked away from pin the gateway in
 // configuration forever -- no MQTT, no AC control.
 #define PORTAL_HARD_TIMEOUT_S 900
-#define WIFI_STA_TIMEOUT_MS 20000UL  // try our own stored SSID before the portal
+#define WIFI_STA_TIMEOUT_MS 20000UL // try our own stored SSID before the portal
 
 // ---- defaults (overridable via config portal / NVS) ----
 #define DEFAULT_TOPIC_PREFIX "ac"
@@ -27,7 +27,7 @@
 #define DEFAULT_MQTT_PORT 1883
 
 // ---- behaviour ----
-#define STATE_HEARTBEAT_MS 30000UL  // re-publish retained state periodically
+#define STATE_HEARTBEAT_MS 30000UL // re-publish retained state periodically
 #define OTA_ENABLED 1
 
 // ---- DHT11 room sensor ----
@@ -41,8 +41,8 @@
 // settings). Silence from EITHER the network/broker OR that heartbeat means the
 // decisions have stopped, and an unattended AC is worse than a warm room, so
 // after LINK_LOST_OFF_MS of no contact we send one IR "off" frame.
-#define LINK_LOST_OFF_MS 300000UL      // 5 minutes (design §8)
-#define SERVICE_HB_TIMEOUT_MS 90000UL  // no ac/hb for 90s -> service looks dead
+#define LINK_LOST_OFF_MS 300000UL     // 5 minutes (design §8)
+#define SERVICE_HB_TIMEOUT_MS 90000UL // no ac/hb for 90s -> service looks dead
 
 // ---- network watch-dog: a dropped link is ours to fix ----
 //
@@ -71,7 +71,7 @@
 //                     cannot make the room colder than it already is.
 #define NET_REDIAL_AFTER_MS 15000UL
 #define NET_REDIAL_EVERY_MS 15000UL
-#define NET_REBOOT_AFTER_MS 600000UL   // 10 minutes
+#define NET_REBOOT_AFTER_MS 600000UL // 10 minutes
 
 // ---- NTP ----
 // ac/event carries a wall-clock `ts` that the service checks for freshness, so

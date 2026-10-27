@@ -7,6 +7,7 @@ commands and prints everything the firmware replies.
     python scripts/hw_selftest.py              # auto-detects the port
     python scripts/hw_selftest.py COM11 --no-reset --cmds h i o
 """
+
 import argparse
 import sys
 import time
@@ -39,7 +40,7 @@ def read_for(ser, seconds, quiet_gap=0.5):
 def reset_into_run(ser):
     """Pulse EN low->high with IO0 high: a normal (not bootloader) reset."""
     ser.dtr = False  # IO0 = high
-    ser.rts = True   # EN  = low  -> hold in reset
+    ser.rts = True  # EN  = low  -> hold in reset
     time.sleep(0.12)
     ser.rts = False  # EN  = high -> boot
     time.sleep(0.05)

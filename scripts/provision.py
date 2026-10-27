@@ -16,19 +16,20 @@ Options
     --no-reset                don't reset the board first (board must already be
                               inside its serial provisioning window)
 
-The firmware exposes this console (see src/serial_console.cpp). It resets the
-board first so the 20 s provisioning window is open -- otherwise the board sits
-in its captive portal, where setup() blocks and the console never runs.
+The firmware exposes this console (see src/serial_console.cpp). The script
+resets the board by default for a predictable starting point. The console is
+also serviced during the non-blocking portal and normal operation; use
+--no-reset to keep an already running board in place.
 
 Passwords are masked in everything this script prints.
 """
+
 import argparse
 import subprocess
 import sys
 import time
 
 import serial
-
 from _port import resolve_port
 
 KEY_MARKERS = ("关键内容", "Key Content")
@@ -88,8 +89,9 @@ def masked(key, value):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("port", nargs="?", help="defaults to the only USB serial port")
     ap.add_argument("--ssid")
     ap.add_argument("--pass", dest="pw")
@@ -109,15 +111,24 @@ def main():
         ssid, pw = read_windows_profile(args.windows_profile)
 
     fields = []
-    if ssid is not None:              fields.append(("ssid", ssid))
-    if pw is not None:                fields.append(("pass", pw))
-    if args.host is not None:         fields.append(("host", args.host))
-    if args.mqtt_port is not None:    fields.append(("port", str(args.mqtt_port)))
-    if args.mqtt_user is not None:    fields.append(("user", args.mqtt_user))
-    if args.mqtt_pass is not None:    fields.append(("mqttpass", args.mqtt_pass))
-    if args.prefix is not None:       fields.append(("prefix", args.prefix))
-    if args.name is not None:         fields.append(("name", args.name))
-    if args.brand is not None:        fields.append(("brand", args.brand))
+    if ssid is not None:
+        fields.append(("ssid", ssid))
+    if pw is not None:
+        fields.append(("pass", pw))
+    if args.host is not None:
+        fields.append(("host", args.host))
+    if args.mqtt_port is not None:
+        fields.append(("port", str(args.mqtt_port)))
+    if args.mqtt_user is not None:
+        fields.append(("user", args.mqtt_user))
+    if args.mqtt_pass is not None:
+        fields.append(("mqttpass", args.mqtt_pass))
+    if args.prefix is not None:
+        fields.append(("prefix", args.prefix))
+    if args.name is not None:
+        fields.append(("name", args.name))
+    if args.brand is not None:
+        fields.append(("brand", args.brand))
 
     if not fields:
         print("nothing to provision -- pass --ssid/--pass/--host/...", file=sys.stderr)
@@ -144,7 +155,7 @@ def main():
             ser.rts = True
             time.sleep(0.12)
             ser.rts = False
-            sys.stdout.write(read_for(ser, 5.0))   # banner + boot 'r' window
+            sys.stdout.write(read_for(ser, 5.0))  # banner + boot 'r' window
 
         send("show")
         for key, value in fields:

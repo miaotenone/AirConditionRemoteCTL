@@ -8,7 +8,7 @@
 #include "pins.h"
 
 static DHTesp s_dht;
-static bool   s_ready = false;
+static bool s_ready = false;
 
 void dht_begin() {
     s_dht.setup(PIN_DHT, DHTesp::DHT11);
@@ -31,7 +31,7 @@ bool dht_read(int& temp_c, int& humidity) {
     if (r.temperature < -20.0f || r.temperature > 60.0f) return false;
     if (r.humidity < 5.0f || r.humidity > 100.0f) return false;
 
-    temp_c   = (int)lroundf(r.temperature);
+    temp_c = (int)lroundf(r.temperature);
     humidity = (int)lroundf(r.humidity);
     return true;
 }

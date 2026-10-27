@@ -6,11 +6,11 @@ Pulses RTS to reset the board, then prints everything it says until the line
 has been quiet for 0.6 s (or SECONDS elapse). Handy for grabbing the boot log
 and the assigned IP without opening a monitor.
 """
+
 import sys
 import time
 
 import serial
-
 from _port import resolve_port
 
 
@@ -27,7 +27,7 @@ def main():
     s.open()
     s.dtr = False
     s.rts = False
-    s.rts = True                      # reset the board
+    s.rts = True  # reset the board
     time.sleep(0.12)
     s.rts = False
 

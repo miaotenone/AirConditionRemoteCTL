@@ -8,7 +8,8 @@
 // window. The decision of *when* to force a fresh WiFi dial and *when* to give
 // up and reboot used to not exist; keeping it pure is what makes it testable.
 //
-//   g++ -std=c++17 -I src tests/native/link_guard_test.cpp src/link_guard.cpp -o build/link_guard_test
+//   g++ -std=c++17 -I src tests/native/link_guard_test.cpp src/link_guard.cpp -o
+//   build/link_guard_test
 #include <cstdio>
 
 #include "link_guard.h"
@@ -16,23 +17,24 @@
 static int g_failures = 0;
 
 static void expect(const char* name, bool cond) {
-    if (cond) { printf("PASS %s\n", name); return; }
+    if (cond) {
+        printf("PASS %s\n", name);
+        return;
+    }
     printf("FAIL %s\n", name);
     ++g_failures;
 }
 
 // One place for the thresholds so the cases read as "15s of silence" instead of
 // "15000" -- the values must match config.h, they are not the thing under test.
-static const unsigned long AFTER  = 15000UL;    // NET_REDIAL_AFTER_MS
-static const unsigned long EVERY  = 15000UL;    // NET_REDIAL_EVERY_MS
-static const unsigned long REBOOT = 600000UL;   // NET_REBOOT_AFTER_MS
+static const unsigned long AFTER = 15000UL;   // NET_REDIAL_AFTER_MS
+static const unsigned long EVERY = 15000UL;   // NET_REDIAL_EVERY_MS
+static const unsigned long REBOOT = 600000UL; // NET_REBOOT_AFTER_MS
 
-static LinkGuardAction action(unsigned long now, unsigned long healthy,
-                             unsigned long redial,
-                             unsigned long after = AFTER,
-                             unsigned long every = EVERY,
-                             unsigned long reboot = REBOOT) {
-    LinkGuardInput in = { now, healthy, redial, after, every, reboot };
+static LinkGuardAction action(unsigned long now, unsigned long healthy, unsigned long redial,
+                              unsigned long after = AFTER, unsigned long every = EVERY,
+                              unsigned long reboot = REBOOT) {
+    LinkGuardInput in = {now, healthy, redial, after, every, reboot};
     return link_guard_action(in);
 }
 
@@ -70,8 +72,7 @@ int main() {
     // Past the deadline the escalation wins even if a dial just went out: the
     // redials have had their chance.
     {
-        expect("exactly 10min -> reboot",
-               action(REBOOT, 0, REBOOT - 1000) == LINK_GUARD_REBOOT);
+        expect("exactly 10min -> reboot", action(REBOOT, 0, REBOOT - 1000) == LINK_GUARD_REBOOT);
         expect("30min of silence, dialling throughout -> reboot",
                action(1800000, 0, 1799000) == LINK_GUARD_REBOOT);
     }
@@ -81,15 +82,17 @@ int main() {
     // base sits just below the wrap; base + 20000 lands past 0.
     {
         unsigned long base = 0xFFFFF000UL;
-        unsigned long now  = base + 20000UL;
+        unsigned long now = base + 20000UL;
         expect("wrap: healthy 20s ago -> redial", action(now, base, 0) == LINK_GUARD_REDIAL);
 
         now = base + 8000UL;
         expect("wrap: healthy 8s ago -> idle", action(now, base, 0) == LINK_GUARD_IDLE);
 
         now = base + 30000UL;
-        expect("wrap: last redial 10s ago -> wait", action(now, base, base + 20000UL) == LINK_GUARD_IDLE);
-        expect("wrap: last redial 20s ago -> redial", action(now, base, base + 10000UL) == LINK_GUARD_REDIAL);
+        expect("wrap: last redial 10s ago -> wait",
+               action(now, base, base + 20000UL) == LINK_GUARD_IDLE);
+        expect("wrap: last redial 20s ago -> redial",
+               action(now, base, base + 10000UL) == LINK_GUARD_REDIAL);
     }
 
     // A link that was healthy right now is idle no matter where the last redial
@@ -99,7 +102,10 @@ int main() {
         expect("healthy now -> idle", action(999999, 999999, 500000) == LINK_GUARD_IDLE);
     }
 
-    if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
+    if (g_failures) {
+        printf("%d failure(s)\n", g_failures);
+        return 1;
+    }
     printf("all link_guard tests passed\n");
     return 0;
 }

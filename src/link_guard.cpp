@@ -1,7 +1,7 @@
 #include "link_guard.h"
 
 enum LinkGuardAction link_guard_action(const LinkGuardInput& in) {
-    unsigned long silent_ms = in.now_ms - in.last_healthy_ms;   // unsigned on purpose
+    unsigned long silent_ms = in.now_ms - in.last_healthy_ms; // unsigned on purpose
 
     if (silent_ms < in.redial_after_ms) return LINK_GUARD_IDLE;
 

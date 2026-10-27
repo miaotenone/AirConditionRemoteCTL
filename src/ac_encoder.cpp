@@ -8,8 +8,8 @@ uint8_t frame_checksum(const uint8_t* data, size_t len) {
     return sum;
 }
 
-size_t build_multi_param_frame(uint8_t* out, uint8_t brand, uint8_t power,
-                               uint8_t mode, uint8_t temp, uint8_t fan) {
+size_t build_multi_param_frame(uint8_t* out, uint8_t brand, uint8_t power, uint8_t mode,
+                               uint8_t temp, uint8_t fan) {
     // Normalise / clamp inputs so we never emit an out-of-range frame.
     power = power ? AC_POWER_ON : AC_POWER_OFF;
     if (mode > AC_MODE_HEAT) mode = AC_MODE_HEAT;
@@ -17,16 +17,16 @@ size_t build_multi_param_frame(uint8_t* out, uint8_t brand, uint8_t power,
     if (temp > AC_TEMP_MAX) temp = AC_TEMP_MAX;
     if (fan > AC_FAN_HIGH) fan = AC_FAN_HIGH;
 
-    out[0]  = IR_FRAME_START;
-    out[1]  = MULTI_PARAM_LEN;
-    out[2]  = 0x00;
-    out[3]  = IR_MODULE_ADDR;
-    out[4]  = AFN_MULTI_PARAM;
-    out[5]  = brand;
-    out[6]  = power;
-    out[7]  = mode;
-    out[8]  = temp;  // 16..30 -> 0x10..0x1E
-    out[9]  = fan;
+    out[0] = IR_FRAME_START;
+    out[1] = MULTI_PARAM_LEN;
+    out[2] = 0x00;
+    out[3] = IR_MODULE_ADDR;
+    out[4] = AFN_MULTI_PARAM;
+    out[5] = brand;
+    out[6] = power;
+    out[7] = mode;
+    out[8] = temp; // 16..30 -> 0x10..0x1E
+    out[9] = fan;
     out[10] = IR_CHECKSUM_FIXED;
     out[11] = IR_FRAME_END;
     return MULTI_PARAM_FRAME_SIZE;

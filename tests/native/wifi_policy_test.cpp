@@ -3,7 +3,8 @@
 // and it kept reconnecting to the old network forever" bug: the portal
 // connects to the NEW network, so the NEW network is what must be written back.
 //
-//   g++ -std=c++17 -I src tests/native/wifi_policy_test.cpp src/wifi_policy.cpp -o build/wifi_policy_test
+//   g++ -std=c++17 -I src tests/native/wifi_policy_test.cpp src/wifi_policy.cpp -o
+//   build/wifi_policy_test
 #include <cstdio>
 #include <cstring>
 #include "wifi_policy.h"
@@ -11,12 +12,17 @@
 static int g_failures = 0;
 
 static void expect(const char* name, bool cond) {
-    if (cond) { printf("PASS %s\n", name); return; }
+    if (cond) {
+        printf("PASS %s\n", name);
+        return;
+    }
     printf("FAIL %s\n", name);
     ++g_failures;
 }
 
-static bool same(const char* a, const char* b) { return strcmp(a, b) == 0; }
+static bool same(const char* a, const char* b) {
+    return strcmp(a, b) == 0;
+}
 
 int main() {
     // The portal connected to a different network than the one stored: the new
@@ -66,8 +72,12 @@ int main() {
     // Over-long input is truncated to the field sizes, never overflowing:
     // 32 bytes of ssid (the 802.11 maximum) and 64 bytes of passphrase.
     {
-        char long_ssid[80]; memset(long_ssid, 'S', sizeof(long_ssid) - 1); long_ssid[79] = '\0';
-        char long_pass[100]; memset(long_pass, 'P', sizeof(long_pass) - 1); long_pass[99] = '\0';
+        char long_ssid[80];
+        memset(long_ssid, 'S', sizeof(long_ssid) - 1);
+        long_ssid[79] = '\0';
+        char long_pass[100];
+        memset(long_pass, 'P', sizeof(long_pass) - 1);
+        long_pass[99] = '\0';
         WifiCred c = wifi_cred_after_portal(long_ssid, long_pass, "", "");
         expect("long ssid truncated to 32", strlen(c.ssid) == 32);
         expect("long password truncated to 64", strlen(c.pass) == 64);
@@ -76,42 +86,31 @@ int main() {
     // --- portal countdown shown on the OLED ---
     // Ceiling, so the last second reads "1" rather than sitting on "0" while
     // the portal is still usable.
-    expect("countdown starts at the full timeout",
-           portal_seconds_left(0, 0, 180) == 180);
-    expect("countdown ticks down",
-           portal_seconds_left(1000, 0, 180) == 179);
-    expect("countdown rounds up mid-second",
-           portal_seconds_left(500, 0, 180) == 180);
-    expect("countdown last second",
-           portal_seconds_left(179500, 0, 180) == 1);
-    expect("countdown reaches zero at the timeout",
-           portal_seconds_left(180000, 0, 180) == 0);
-    expect("countdown never goes negative",
-           portal_seconds_left(500000, 0, 180) == 0);
+    expect("countdown starts at the full timeout", portal_seconds_left(0, 0, 180) == 180);
+    expect("countdown ticks down", portal_seconds_left(1000, 0, 180) == 179);
+    expect("countdown rounds up mid-second", portal_seconds_left(500, 0, 180) == 180);
+    expect("countdown last second", portal_seconds_left(179500, 0, 180) == 1);
+    expect("countdown reaches zero at the timeout", portal_seconds_left(180000, 0, 180) == 0);
+    expect("countdown never goes negative", portal_seconds_left(500000, 0, 180) == 0);
     // A phone attached resets t0, so the portal gets its full window back.
     // Without the bump, the portal would already be past its deadline here.
-    expect("countdown after a client attaches",
-           portal_seconds_left(180000, 179000, 180) == 179);
+    expect("countdown after a client attaches", portal_seconds_left(180000, 179000, 180) == 179);
     // millis() wraps every ~49 days; the unsigned subtraction must survive it.
     // `now` is computed with the same arithmetic as the code, so the elapsed
     // time is exactly 20 s whether unsigned long is 32- or 64-bit wide.
     {
         unsigned long start = 0xFFFFFF00UL;
-        unsigned long now   = start + 20000UL;
-        expect("countdown survives the millis() wrap",
-               portal_seconds_left(now, start, 180) == 160);
+        unsigned long now = start + 20000UL;
+        expect("countdown survives the millis() wrap", portal_seconds_left(now, start, 180) == 160);
     }
 
     // --- an attached client must not hold the portal open forever ---
     // The sliding clock above restarts whenever a station is associated, so a
     // phone someone walked away from would pin the device in the portal. This
     // absolute ceiling is measured from the first time the portal opened.
-    expect("hard ceiling: still open early",
-           portal_hard_timeout(100000, 0, 600) == false);
-    expect("hard ceiling: fires at the cap",
-           portal_hard_timeout(600000, 0, 600) == true);
-    expect("hard ceiling: fires past the cap",
-           portal_hard_timeout(900000, 0, 600) == true);
+    expect("hard ceiling: still open early", portal_hard_timeout(100000, 0, 600) == false);
+    expect("hard ceiling: fires at the cap", portal_hard_timeout(600000, 0, 600) == true);
+    expect("hard ceiling: fires past the cap", portal_hard_timeout(900000, 0, 600) == true);
     expect("hard ceiling: survives the millis() wrap",
            portal_hard_timeout(0xFFFFFF00UL + 700000UL, 0xFFFFFF00UL, 600) == true);
 
@@ -155,13 +154,15 @@ int main() {
     // core's own accessors strlen() them. So the copy has to be told how many
     // bytes are legal rather than looking for a terminator that is not there.
     {
-        char raw[64]; memset(raw, 'P', sizeof(raw));   // legal max, NOT terminated
+        char raw[64];
+        memset(raw, 'P', sizeof(raw)); // legal max, NOT terminated
         char dst[65];
         wifi_field_copy(dst, sizeof(dst), raw, sizeof(raw));
         expect("full-length field: kept whole", strlen(dst) == 64);
         expect("full-length field: terminated", dst[64] == '\0');
 
-        char raw2[33]; memset(raw2, 'S', sizeof(raw2));
+        char raw2[33];
+        memset(raw2, 'S', sizeof(raw2));
         char dst2[33];
         wifi_field_copy(dst2, sizeof(dst2), raw2, sizeof(raw2));
         expect("full-length ssid: kept whole", strlen(dst2) == 32);
@@ -170,10 +171,12 @@ int main() {
         // copying the padding. The bytes AFTER the terminator are deliberately
         // non-zero, so an implementation that ignores the terminator and copies
         // the full width fails this rather than passing by accident.
-        char raw3[64]; memset(raw3, 'X', sizeof(raw3));
+        char raw3[64];
+        memset(raw3, 'X', sizeof(raw3));
         memcpy(raw3, "hunter2xx", 9);
         raw3[9] = '\0';
-        char dst3[65]; memset(dst3, 'Y', sizeof(dst3));
+        char dst3[65];
+        memset(dst3, 'Y', sizeof(dst3));
         wifi_field_copy(dst3, sizeof(dst3), raw3, sizeof(raw3));
         expect("short field: stops at the terminator", strlen(dst3) == 9);
         // The sentinel past the terminator is untouched, proving the copy
@@ -181,21 +184,27 @@ int main() {
         expect("short field: nothing written past the terminator", dst3[10] == 'Y');
 
         // An open network: the field is entirely zeroes.
-        char raw4[64]; memset(raw4, '\0', sizeof(raw4));
+        char raw4[64];
+        memset(raw4, '\0', sizeof(raw4));
         char dst4[65];
         wifi_field_copy(dst4, sizeof(dst4), raw4, sizeof(raw4));
         expect("empty field: empty copy", dst4[0] == '\0');
 
         // A destination narrower than the source must still terminate and must
         // never write past dst_size.
-        char raw5[64]; memset(raw5, 'P', sizeof(raw5));
-        char dst5[8]; memset(dst5, 'Y', sizeof(dst5));
+        char raw5[64];
+        memset(raw5, 'P', sizeof(raw5));
+        char dst5[8];
+        memset(dst5, 'Y', sizeof(dst5));
         wifi_field_copy(dst5, sizeof(dst5), raw5, sizeof(raw5));
         expect("narrow dst: truncated to dst_size - 1", strlen(dst5) == 7);
         expect("narrow dst: terminated inside the buffer", dst5[7] == '\0');
     }
 
-    if (g_failures) { printf("\n%d failure(s)\n", g_failures); return 1; }
+    if (g_failures) {
+        printf("\n%d failure(s)\n", g_failures);
+        return 1;
+    }
     printf("\nall wifi_policy tests passed\n");
     return 0;
 }
