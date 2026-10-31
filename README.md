@@ -50,6 +50,8 @@ python -m platformio device monitor -e esp32dev
 
 串口配网、自检、故障定位见 [硬件联调文档](docs/hardware-validation.md)。历史真机记录不代表当前代码已做真机回归。
 
+可选三键只用于屏幕导航和只读诊断：左右切页并固定，OK 短按切换自动/固定，长按进入/退出诊断。GPIO25/26/27；**2026-10-31 已接线、烧录并通过启动检查，用户反馈基础按键与屏幕测试正常**。见 [使用说明](docs/runtime.md) 和 [联调记录](docs/superpowers/plans/2026-10-27-oled-buttons-diagnostics.md#2026-10-31-接线后联调)。
+
 ## 必须了解
 
 - 红外单向发送，`state` 是**影子状态**，不是空调实测状态；实体遥控器操作不会自动同步。

@@ -23,6 +23,13 @@ void net_publish_state(const AppConfig& cfg, const AcState& state, bool online);
 // so "MQTT is connected" says nothing about the bot service (design 18.8).
 bool net_service_alive();
 
+struct HeartbeatSnapshot {
+    bool seen;
+    uint32_t last_received_ms;
+};
+// Observation only; liveness still comes from net_service_alive().
+HeartbeatSnapshot net_heartbeat_snapshot();
+
 // Publish one DHT11 reading. `ok=false` means "this read failed" -- the service
 // must not turn that into data.
 void net_publish_env(const AppConfig& cfg, int temp_c, int humidity, bool ok);

@@ -26,7 +26,6 @@ static const uint8_t HEADER_H = 12;
 //: How long each page stays put, and how the swap is animated. Six 40 ms
 //: frames = a ~240 ms slide, which reads as motion rather than a jump without
 //: costing any visible latency.
-#define DISPLAY_PAGE_MS 5000UL
 #define DISPLAY_FRAME_MS 40UL
 #define DISPLAY_ANIM_FRAMES 6
 
@@ -41,13 +40,12 @@ static PageFn s_pages[PAGE_COUNT] = {page_aircon, page_room, page_link, page_fw}
 
 static DisplayInfo s_info;
 static bool s_ok = false; // an OLED answered the probe
-static uint8_t s_page = 0;
+static UiNavigation s_nav;
 static uint8_t s_from = 0;
 static uint8_t s_anim = 0; // frames left in the current slide
 static bool s_dirty = true;
 static bool s_manual = true; // display_lines() owns the screen
 static uint32_t s_fp = 0;
-static uint32_t s_lastSwitch = 0;
 static uint32_t s_lastFrame = 0;
 
 //: Bound on a single I2C transaction. The default is unbounded enough that a
@@ -79,18 +77,28 @@ static void header(int16_t x, const char* title, uint8_t page) {
     u8g2.drawStr(x + W - 4 - (int16_t)u8g2.getStrWidth(badge), 9, badge);
     u8g2.setDrawColor(1);
     u8g2.drawHLine(x + 4, 54, W - 8);
-    for (uint8_t dot = 0; dot < PAGE_COUNT; ++dot) {
-        const int16_t dx = x + 102 + dot * 7;
-        if (dot + 1 == page)
-            u8g2.drawBox(dx, 59, 4, 3);
-        else
-            u8g2.drawFrame(dx, 59, 4, 3);
+    u8g2.drawStr(x + 76, 63, s_nav.diagnostics ? "DIAG" : s_nav.automatic ? "AUTO" : "HOLD");
+    if (s_nav.diagnostics) {
+        char index[8];
+        snprintf(index, sizeof(index), "%u/5", (unsigned)s_nav.detail + 1);
+        u8g2.drawStr(x + 110, 63, index);
+    } else {
+        for (uint8_t dot = 0; dot < PAGE_COUNT; ++dot) {
+            const int16_t dx = x + 102 + dot * 7;
+            if (dot + 1 == page)
+                u8g2.drawBox(dx, 59, 4, 3);
+            else
+                u8g2.drawFrame(dx, 59, 4, 3);
+        }
     }
 }
 
 static void footer(int16_t x, const char* text) {
+    // Reserve the right side for AUTO/HOLD/DIAG and page indication.
+    char short_text[15];
+    snprintf(short_text, sizeof(short_text), "%.14s", text);
     u8g2.setFont(u8g2_font_5x7_tf);
-    u8g2.drawStr(x + 4, 63, text);
+    u8g2.drawStr(x + 4, 63, short_text);
 }
 
 // A big number followed by a "deg C" suffix. Returns nothing; kept here so
@@ -115,8 +123,8 @@ static void no_sensor(int16_t x) {
     u8g2.drawStr(x + 14, 38, "!");
     u8g2.drawStr(x + 36, 33, "NO DATA");
     u8g2.setFont(u8g2_font_5x7_tf);
-    u8g2.drawStr(x + 36, 46, "CHECK SENSOR");
-    footer(x, "DHT11 READ FAILED");
+    u8g2.drawStr(x + 36, 46, s_info.sensor_seen ? "CHECK SENSOR" : "NOT READ");
+    footer(x, s_info.sensor_seen ? "DHT11 FAILED" : "WAIT DHT11");
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +221,7 @@ static void page_fw(int16_t x) {
     u8g2.setFont(u8g2_font_5x7_tf);
 
     char row[32];
-    snprintf(row, sizeof(row), "%s / OLED UI2", FW_TAG);
+    snprintf(row, sizeof(row), "%s / OLED UI3", FW_TAG);
     u8g2.drawStr(x + 4, 23, row);
     u8g2.drawStr(x + 4, 35, FW_GIT_HASH);
 
@@ -227,6 +235,85 @@ static void page_fw(int16_t x) {
 // ---------------------------------------------------------------------------
 // Change detection: redraw on data change, not every loop().
 // ---------------------------------------------------------------------------
+static void diagnostic_row(uint8_t y, const char* text) {
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(4, y, text);
+}
+
+static void age_row(uint8_t y, const char* label, uint32_t then) {
+    char row[32];
+    snprintf(row, sizeof(row), "%s %lus", label,
+             (unsigned long)((uint32_t)(s_info.snapshot_ms - then) / 1000));
+    diagnostic_row(y, row);
+}
+
+static void render_diagnostic() {
+    static const char* titles[] = {"NETWORK", "HEARTBEAT", "SENSOR", "FAILSAFE", "BOOT/FW"};
+    header(0, titles[s_nav.detail], 0);
+    char row[40];
+    switch (s_nav.detail) {
+    case 0:
+        snprintf(row, sizeof(row), "WIFI %s  MQTT %s", s_info.wifi_connected ? "UP" : "DOWN",
+                 s_info.mqtt_connected ? "UP" : "DOWN");
+        diagnostic_row(23, row);
+        snprintf(row, sizeof(row), "IP %s",
+                 s_info.ip && s_info.ip[0] && strcmp(s_info.ip, "0.0.0.0") != 0 ? s_info.ip : "--");
+        diagnostic_row(35, row);
+        snprintf(row, sizeof(row), "UP %lus", (unsigned long)s_info.uptime_s);
+        diagnostic_row(48, row);
+        footer(0, "READ ONLY");
+        break;
+    case 1:
+        diagnostic_row(23, !s_info.heartbeat_seen ? "NOT RECEIVED"
+                           : s_info.service_alive ? "ALIVE"
+                                                  : "EXPIRED");
+        if (s_info.heartbeat_seen)
+            age_row(35, "LAST", s_info.heartbeat_last_ms);
+        else
+            diagnostic_row(35, "LAST --");
+        snprintf(row, sizeof(row), "TIMEOUT %lus", (unsigned long)(SERVICE_HB_TIMEOUT_MS / 1000));
+        diagnostic_row(48, row);
+        footer(0, "ARRIVAL AGE");
+        break;
+    case 2:
+        diagnostic_row(23, !s_info.sensor_seen ? "NOT READ"
+                           : s_info.env_ok     ? "READ OK"
+                                               : "READ FAILED");
+        if (s_info.sensor_seen)
+            age_row(35, "ATTEMPT", s_info.sensor_last_ms);
+        else
+            diagnostic_row(35, "ATTEMPT --");
+        if (s_info.sensor_good_seen)
+            age_row(48, "LAST GOOD", s_info.sensor_good_ms);
+        else
+            diagnostic_row(48, "LAST GOOD --");
+        footer(0, "DHT11");
+        break;
+    case 3:
+        diagnostic_row(23, s_info.failsafe         ? "TRIPPED"
+                           : s_info.failsafe_armed ? "ARMED"
+                                                   : "UNARMED");
+        diagnostic_row(35, !s_info.failsafe_armed                          ? "NO CONTACT"
+                           : s_info.mqtt_connected && s_info.service_alive ? "CONTACT OK"
+                                                                           : "CONTACT LOST");
+        if (s_info.failsafe_armed)
+            age_row(48, "LAST", s_info.last_contact_ms);
+        else
+            diagnostic_row(48, "LAST --");
+        snprintf(row, sizeof(row), "OFF %lus", (unsigned long)(LINK_LOST_OFF_MS / 1000));
+        footer(0, row);
+        break;
+    case 4:
+        snprintf(row, sizeof(row), "%u %s", s_info.boot_count,
+                 s_info.boot_reason ? s_info.boot_reason : "?");
+        diagnostic_row(23, row);
+        diagnostic_row(35, FW_GIT_HASH);
+        diagnostic_row(48, __DATE__);
+        footer(0, __TIME__);
+        break;
+    }
+}
+
 static void mix_hash(uint32_t& h, uint32_t v) {
     h = (h ^ v) * 16777619u;
 }
@@ -243,6 +330,20 @@ static uint32_t fingerprint(const DisplayInfo& i) {
     mix_hash(h, i.service_alive ? 1u : 0u);
     mix_hash(h, i.failsafe ? 1u : 0u);
     mix_hash(h, i.uptime_s / 60u); // minute resolution: no 1 Hz churn
+    mix_hash(h, i.wifi_connected);
+    mix_hash(h, i.mqtt_connected);
+    mix_hash(h, i.heartbeat_seen);
+    mix_hash(h, i.heartbeat_last_ms);
+    mix_hash(h, i.sensor_seen);
+    mix_hash(h, i.sensor_last_ms);
+    mix_hash(h, i.sensor_good_seen);
+    mix_hash(h, i.sensor_good_ms);
+    mix_hash(h, i.failsafe_armed);
+    mix_hash(h, i.last_contact_ms);
+    mix_hash(h, i.boot_count);
+    if (s_nav.diagnostics) mix_hash(h, i.snapshot_ms / 1000u);
+    for (const char* p = i.boot_reason; p && *p; ++p)
+        mix_hash(h, (uint8_t)*p);
     for (const char* p = i.net_state; p && *p; ++p)
         mix_hash(h, (uint8_t)*p);
     for (const char* p = i.ip; p && *p; ++p)
@@ -326,7 +427,7 @@ void display_begin() {
     u8g2.sendBuffer();
 
     s_ok = true;
-    s_lastSwitch = millis();
+    s_nav.reset(millis());
 }
 
 void display_lines(const char* l1, const char* l2, const char* l3, const char* l4) {
@@ -360,6 +461,11 @@ void display_show_ac(const AcState& s, const char* net_state, const char* ip) {
 
 void display_show_info(const DisplayInfo& info) {
     s_info = info;
+    if (s_manual) {
+        s_dirty = true;
+        s_anim = 0;
+        s_nav.restart_timer(millis());
+    }
     s_manual = false;
 
     uint32_t fp = fingerprint(info);
@@ -367,6 +473,13 @@ void display_show_info(const DisplayInfo& info) {
         s_fp = fp;
         s_dirty = true;
     }
+}
+
+void display_navigate(UiEvent event) {
+    if (!s_ok || s_manual) return;
+    s_nav.handle(event, millis());
+    s_anim = 0;
+    s_dirty = true;
 }
 
 // Prevent outgoing footer text or decorations bleeding into the incoming page.
@@ -385,10 +498,9 @@ void display_tick() {
     uint32_t now = millis();
 
     // Time to move on?
-    if (s_anim == 0 && (uint32_t)(now - s_lastSwitch) >= DISPLAY_PAGE_MS) {
-        s_from = s_page;
-        s_page = (uint8_t)((s_page + 1) % PAGE_COUNT);
-        s_lastSwitch = now;
+    const uint8_t previous = s_nav.page;
+    if (s_anim == 0 && s_nav.tick(now)) {
+        s_from = previous;
         s_anim = DISPLAY_ANIM_FRAMES;
     }
 
@@ -403,7 +515,7 @@ void display_tick() {
 
         u8g2.clearBuffer();
         render_page(s_from, (int16_t)(-off));
-        render_page(s_page, (int16_t)(W - off));
+        render_page(s_nav.page, (int16_t)(W - off));
         u8g2.sendBuffer();
         if (s_anim == 0) s_dirty = false;
         return;
@@ -411,7 +523,10 @@ void display_tick() {
 
     s_dirty = false;
     u8g2.clearBuffer();
-    render_page(s_page, 0);
+    if (s_nav.diagnostics)
+        render_diagnostic();
+    else
+        render_page(s_nav.page, 0);
     u8g2.sendBuffer();
 }
 

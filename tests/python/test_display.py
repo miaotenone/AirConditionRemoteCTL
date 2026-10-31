@@ -25,6 +25,7 @@ class DisplayTests(unittest.TestCase):
                     "-I",
                     str(ROOT / "src"),
                     str(ROOT / "tests/native/display_test.cpp"),
+                    str(ROOT / "src/ui_navigation.cpp"),
                     "-o",
                     str(executable),
                 ],

@@ -79,6 +79,10 @@ bool net_service_alive() {
     return s_hbSeen && (uint32_t)(millis() - s_lastHb) < SERVICE_HB_TIMEOUT_MS;
 }
 
+HeartbeatSnapshot net_heartbeat_snapshot() {
+    return {s_hbSeen, s_lastHb};
+}
+
 static bool mqtt_connect() {
     String clientId =
         s_cfg.device_name + "-" + String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFF), HEX);

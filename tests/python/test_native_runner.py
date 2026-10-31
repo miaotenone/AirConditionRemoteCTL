@@ -119,7 +119,8 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("== ac_encoder ==", result.stdout)
         self.assertIn("== failsafe ==", result.stdout)
-        self.assertIn("All 6 native suites passed.", result.stdout)
+        self.assertIn("== ui_navigation ==", result.stdout)
+        self.assertIn("All 7 native suites passed.", result.stdout)
 
 
 if __name__ == "__main__":

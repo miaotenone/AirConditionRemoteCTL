@@ -23,3 +23,10 @@
 // on / reset. Holding it while powering up drops the board into the download
 // mode instead.
 #define PIN_BOOT 0
+
+// ---- Optional read-only OLED navigation (candidate pins; verify actual board) ----
+// Normally-open momentary switches to GND, INPUT_PULLUP, active LOW.
+// Do not feed 5V into these GPIOs or share the BOOT/reset wiring.
+#define PIN_BUTTON_LEFT 25
+#define PIN_BUTTON_OK 26
+#define PIN_BUTTON_RIGHT 27

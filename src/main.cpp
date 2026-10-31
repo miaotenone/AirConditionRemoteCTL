@@ -11,6 +11,7 @@
 #include "dht_sensor.h"
 #include "ir_module.h"
 #include "display.h"
+#include "buttons.h"
 #include "config_store.h"
 #include "state_store.h"
 #include "web_config.h"
@@ -35,6 +36,8 @@ static char g_last_action[24] = "boot";
 static bool g_env_ok = false;
 static int g_room_c = 0;
 static int g_humidity = 0;
+static bool g_env_seen = false, g_env_good_seen = false;
+static uint32_t g_env_last_ms = 0, g_env_good_ms = 0;
 
 // Fail-safe bookkeeping (design 8). The AC gets turned off when the device
 // loses contact with whoever is making the decisions, so we have to remember
@@ -65,6 +68,20 @@ static void refresh_display() {
     info.service_alive = net_service_alive();
     info.failsafe = g_failsafe.tripped;
     info.uptime_s = millis() / 1000;
+    const HeartbeatSnapshot heartbeat = net_heartbeat_snapshot();
+    info.wifi_connected = WiFi.status() == WL_CONNECTED;
+    info.mqtt_connected = net_connected();
+    info.heartbeat_seen = heartbeat.seen;
+    info.heartbeat_last_ms = heartbeat.last_received_ms;
+    info.sensor_seen = g_env_seen;
+    info.sensor_last_ms = g_env_last_ms;
+    info.sensor_good_seen = g_env_good_seen;
+    info.sensor_good_ms = g_env_good_ms;
+    info.failsafe_armed = g_failsafe.armed;
+    info.last_contact_ms = g_failsafe.last_contact_ms;
+    info.boot_count = boot_diag_count();
+    info.boot_reason = boot_diag_reason();
+    info.snapshot_ms = millis();
     display_show_info(info);
 }
 
@@ -134,6 +151,12 @@ static void dht_loop() {
 
     int t = g_room_c, h = g_humidity;
     bool ok = dht_read(t, h);
+    g_env_seen = true;
+    g_env_last_ms = millis();
+    if (ok) {
+        g_env_good_seen = true;
+        g_env_good_ms = g_env_last_ms;
+    }
     g_env_ok = ok;
     g_room_c = t;
     g_humidity = h;
@@ -280,6 +303,7 @@ void setup() {
 
     net_publish_state(g_cfg, g_state, true);
     refresh_display();
+    buttons_begin();
     Serial.printf("[ac-gateway] ready, brand=0x%02X topic=%s\n", g_cfg.brand,
                   g_cfg.topic_prefix.c_str());
 }
@@ -327,6 +351,7 @@ void loop() {
         lastDisplay = millis();
         refresh_display();
     }
+    buttons_loop();
     display_tick();
 
     delay(2);

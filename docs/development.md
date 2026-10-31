@@ -29,6 +29,7 @@ python scripts/run_native_tests.py --compiler clang++ --compiler-arg=-O2
 | `src/main.cpp` | 启动顺序、命令执行、NVS/IR/MQTT 副作用编排 |
 | `src/ac_state.*` / `src/ac_encoder.*` | 状态夹取、红外编码；无硬件依赖 |
 | `src/failsafe.*` | 失联关机判定；副作用仍由 main 按原顺序执行 |
+| `src/ui_navigation.*` / `src/buttons.*` | 纯按键/导航状态机与 GPIO 适配；不执行空调控制 |
 | `src/link_guard.*` / `src/wifi_policy.*` | 网络升级恢复、门户计时/凭据策略 |
 | `src/net_mqtt.*` | 主题路由、MQTT 重连、状态/环境/事件发布、SNTP |
 | `src/config_store.*` / `src/state_store.*` | 应用配置和影子状态持久化 |
@@ -39,7 +40,7 @@ python scripts/run_native_tests.py --compiler clang++ --compiler-arg=-O2
 
 ## 回归策略
 
-原生入口的套件列表是唯一清单：编码、状态、WiFi 策略、链路看门狗、复位原因、失联保护。新增纯逻辑套件时同步注册 `scripts/run_native_tests.py`。Python 测试覆盖入口的编译失败、执行失败、缺失编译器、文本规范，不访问真实串口。
+原生入口的套件列表是唯一清单：编码、状态、WiFi 策略、链路看门狗、复位原因、失联保护、按键与导航。新增纯逻辑套件时同步注册 `scripts/run_native_tests.py`。Python 测试覆盖入口的编译失败、执行失败、缺失编译器、文本规范及真实显示/按键单元的主机 harness，不访问真实串口。
 
 先写能观察行为的测试，再做修改：边界值、`millis()` 回绕、首次连接、重复执行和恢复路径都比检查源码字符串更有价值。提取逻辑不应改变 MQTT payload/retained、红外字节、NVS key/写入时机，或 IR/MQTT/显示副作用顺序。当前 native 测试不等于硬件/NVS 断电或完整 MQTT 集成测试。
 

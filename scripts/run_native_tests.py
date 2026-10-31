@@ -16,6 +16,7 @@ SUITES = {
     "link_guard": ("link_guard.cpp",),
     "reset_info": ("reset_info.cpp",),
     "failsafe": ("failsafe.cpp",),
+    "ui_navigation": ("ui_navigation.cpp",),
 }
 
 
